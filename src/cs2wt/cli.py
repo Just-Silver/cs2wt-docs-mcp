@@ -10,7 +10,7 @@ from .fetch import crawl
 from .http import DEFAULT_UA, AnubisSession
 from .index import DocIndex, build_index
 from .sync import sync
-from .wiki import DEFAULT_API, WikiClient
+from .wiki import HtmlClient
 
 DEFAULT_PREFIX = "Counter-Strike 2 Workshop Tools"
 
@@ -23,7 +23,6 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--data-dir", default="data", help="where raw docs are stored")
     parser.add_argument("--db", default=None, help="index path (default: <data-dir>/docs.sqlite)")
     parser.add_argument("--cookie", default="cookies.txt", help="Anubis cookie jar path")
-    parser.add_argument("--api", default=DEFAULT_API, help="MediaWiki API url")
     parser.add_argument("--ua", default=DEFAULT_UA, help="User-Agent (must stay stable)")
     parser.add_argument("--delay", type=float, default=1.0, help="seconds between requests")
 
@@ -50,11 +49,11 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _new_client(args) -> WikiClient:
+def _new_client(args) -> HtmlClient:
     session = AnubisSession(
         user_agent=args.ua, cookie_path=args.cookie, delay=args.delay
     )
-    return WikiClient(session, api_url=args.api)
+    return HtmlClient(session)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -98,9 +97,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "get":
         index = DocIndex(db)
-        page = index.get(int(args.key)) if args.key.isdigit() else None
-        if page is None:
-            page = index.get_by_title(args.key)
+        page = index.get(args.key)
         if page is None:
             print(f"not found: {args.key}", file=sys.stderr)
             index.close()
@@ -113,8 +110,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "list":
         index = DocIndex(db)
-        for pageid, title in index.list_titles():
-            print(f"{pageid}\t{title}")
+        for title in index.list_titles():
+            print(title)
         index.close()
         return 0
 
