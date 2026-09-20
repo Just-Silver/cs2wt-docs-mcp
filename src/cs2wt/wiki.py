@@ -47,13 +47,15 @@ class HtmlClient:
             html=html,
         )
 
-    def iter_pages(self, prefix: str, seeds=(), known=None):
+    def iter_pages(self, prefix: str, seeds=(), known=None, failed=None):
         """BFS over ``/wiki/`` links, yielding pages whose title has ``prefix``.
 
         ``seeds`` (e.g. titles from an existing manifest) are visited first so a
         migration cannot drop already-known pages.  ``known`` is an optional
         title->PageContent cache that is read and populated, so callers can
-        avoid re-fetching pages they already have.
+        avoid re-fetching pages they already have.  ``failed`` is an optional
+        list that collects titles whose fetch raised; a transient failure is
+        skipped so it cannot abort the whole traversal.
         """
         known = {} if known is None else known
         queue = [prefix, *seeds]
@@ -65,7 +67,12 @@ class HtmlClient:
             visited.add(title)
             page = known.get(title)
             if page is None:
-                page = self.fetch_page(title)
+                try:
+                    page = self.fetch_page(title)
+                except Exception:  # noqa: BLE001 - tolerate per-page failures
+                    if failed is not None:
+                        failed.append(title)
+                    continue
                 if page is None:
                     continue
                 known[title] = page

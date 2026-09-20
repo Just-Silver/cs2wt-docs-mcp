@@ -20,12 +20,15 @@ def page_html(title, links=(), revid=1):
 
 
 class FakeSession:
-    def __init__(self, pages):
+    def __init__(self, pages, errors=()):
         self.pages = pages
+        self.errors = set(errors)
         self.requested = []
 
     def get(self, url):
         self.requested.append(url)
+        if url in self.errors:
+            raise RuntimeError(f"boom: {url}")
         if url not in self.pages:
             raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
         return self.pages[url]
@@ -65,6 +68,25 @@ class HtmlClientTest(unittest.TestCase):
         before = len(session.requested)
         list(client.iter_pages("Root", known=known))
         self.assertEqual(len(session.requested), before)
+
+    def test_iter_pages_skips_failed_page_and_records_it(self):
+        pages = {
+            f"{BASE}/wiki/Root": page_html("Root", links=["Root/Bad", "Root/Good"]),
+            f"{BASE}/wiki/Root/Bad": page_html("Root/Bad", links=["Root/Deep"]),
+            f"{BASE}/wiki/Root/Good": page_html("Root/Good"),
+            f"{BASE}/wiki/Root/Deep": page_html("Root/Deep"),
+        }
+        session = FakeSession(pages, errors={f"{BASE}/wiki/Root/Bad"})
+        client = HtmlClient(session)
+        failed = []
+        titles = [p.title for p in client.iter_pages("Root", failed=failed)]
+
+        self.assertIn("Root", titles)
+        self.assertIn("Root/Good", titles)
+        self.assertNotIn("Root/Bad", titles)
+        # 失败页的链接不会被继续遍历
+        self.assertNotIn("Root/Deep", titles)
+        self.assertEqual(failed, ["Root/Bad"])
 
 
 if __name__ == "__main__":

@@ -1,10 +1,11 @@
 import sys
 import unittest
+import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from cs2wt.http import assert_allowed_url
+from cs2wt.http import _GuardedRedirectHandler, assert_allowed_url
 
 OK = [
     "https://developer.valvesoftware.com/wiki/Assault",
@@ -33,6 +34,22 @@ class GuardTest(unittest.TestCase):
         for url in BAD:
             with self.assertRaises(ValueError):
                 assert_allowed_url(url)
+
+
+class RedirectGuardTest(unittest.TestCase):
+    def test_redirect_to_disallowed_is_blocked(self):
+        handler = _GuardedRedirectHandler()
+        req = urllib.request.Request("https://developer.valvesoftware.com/wiki/A")
+        with self.assertRaises(ValueError):
+            handler.redirect_request(req, None, 302, "Found", {}, "https://evil.example/wiki/B")
+
+    def test_redirect_within_wiki_is_allowed(self):
+        handler = _GuardedRedirectHandler()
+        req = urllib.request.Request("https://developer.valvesoftware.com/wiki/A")
+        result = handler.redirect_request(
+            req, None, 302, "Found", {}, "https://developer.valvesoftware.com/wiki/B"
+        )
+        self.assertIsNotNone(result)
 
 
 if __name__ == "__main__":

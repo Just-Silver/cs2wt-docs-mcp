@@ -42,6 +42,14 @@ def assert_allowed_url(url: str) -> None:
         raise ValueError(f"disallowed path: {url!r}")
 
 
+class _GuardedRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Re-validate the target of every redirect against the robots contract."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        assert_allowed_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 class AnubisSession:
     """A minimal throttled HTTP session with automatic PoW solving."""
 
@@ -69,7 +77,7 @@ class AnubisSession:
 
         self._opener = urllib.request.build_opener(
             urllib.request.HTTPCookieProcessor(self.jar),
-            urllib.request.HTTPRedirectHandler(),
+            _GuardedRedirectHandler(),
         )
 
     # -- internals ---------------------------------------------------------

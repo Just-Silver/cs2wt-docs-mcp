@@ -22,13 +22,15 @@ class SyncReport:
     updated: list[str] = field(default_factory=list)
     removed: list[str] = field(default_factory=list)
     unchanged: list[str] = field(default_factory=list)
+    failed: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
         return (
             f"+{len(self.added)} added  "
             f"~{len(self.updated)} updated  "
             f"-{len(self.removed)} removed  "
-            f"={len(self.unchanged)} unchanged"
+            f"={len(self.unchanged)} unchanged  "
+            f"!{len(self.failed)} failed"
         )
 
 
@@ -50,7 +52,11 @@ def sync(
 
     # 1. Existing pages: fetch each; a 404 removes it, otherwise compare revid.
     for title in local:
-        page = client.fetch_page(title)
+        try:
+            page = client.fetch_page(title)
+        except Exception:  # noqa: BLE001 - keep the record, never delete on error
+            report.failed.append(title)
+            continue
         if page is None:
             report.removed.append(title)
             continue
@@ -66,7 +72,7 @@ def sync(
 
     # 2. New pages: BFS from the root to discover titles outside the manifest
     #    (reusing the cache so already-fetched pages are not requested twice).
-    for page in client.iter_pages(prefix, seeds=list(local), known=cache):
+    for page in client.iter_pages(prefix, seeds=list(local), known=cache, failed=report.failed):
         if page.title not in local:
             report.added.append(page.title)
 
@@ -93,12 +99,29 @@ def sync(
                 content=html_to_markdown(page.html),
                 revid=page.revid,
                 timestamp=page.timestamp,
-                url=page_url(page.title),
+                url=page_url(page.title, client.base_url),
             )
 
         for title in report.removed:
             records.pop(title, None)
             index.delete(title)
+
+        # Self-heal: re-index any unchanged page missing from the index (e.g.
+        # the index was absent or only partially built).
+        indexed = set(index.list_titles())
+        for title in report.unchanged:
+            if title in indexed:
+                continue
+            page = cache.get(title)
+            if page is None:
+                continue
+            index.upsert(
+                title=title,
+                content=html_to_markdown(page.html),
+                revid=page.revid,
+                timestamp=page.timestamp,
+                url=page_url(title, client.base_url),
+            )
 
         source = getattr(client, "base_url", "") or manifest.get("source", "")
         manifest["pages"] = list(records.values())

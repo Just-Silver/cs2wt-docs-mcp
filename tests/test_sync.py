@@ -26,23 +26,33 @@ def page(title, revid, links=()):
 class FakeClient:
     base_url = "https://developer.valvesoftware.com"
 
-    def __init__(self, pages, missing=(), redirects=None):
+    def __init__(self, pages, missing=(), redirects=None, errors=()):
         self.pages = {p.title: p for p in pages}
         self.missing = set(missing)
         self.redirects = dict(redirects or {})
+        self.errors = set(errors)
         self.fetched = []
 
     def fetch_page(self, title):
         self.fetched.append(title)
+        if title in self.errors:
+            raise RuntimeError(f"boom: {title}")
         if title in self.missing:
             return None
         return self.pages.get(self.redirects.get(title, title))
 
-    def iter_pages(self, prefix, seeds=(), known=None):
+    def iter_pages(self, prefix, seeds=(), known=None, failed=None):
         known = {} if known is None else known
         titles = [prefix] + [t for t in self.pages if t.startswith(prefix) and t != prefix]
         for title in titles:
-            page_obj = known.get(title) or self.fetch_page(title)
+            page_obj = known.get(title)
+            if page_obj is None:
+                try:
+                    page_obj = self.fetch_page(title)
+                except RuntimeError:
+                    if failed is not None:
+                        failed.append(title)
+                    continue
             if page_obj is None:
                 continue
             known[title] = page_obj
@@ -137,6 +147,41 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(sorted(report.added), ["Root", "Root/A"])
         self.assertFalse((self.data / "manifest.json").exists())
         self.assertFalse(self.db.exists())
+
+    def test_transient_fetch_failure_keeps_page(self):
+        pages = [page("Root", 1, ["Root/A"]), page("Root/A", 10)]
+        sync(FakeClient(pages), prefix="Root", data_dir=self.data, db_path=self.db)
+
+        report = sync(
+            FakeClient(pages, errors={"Root/A"}),
+            prefix="Root", data_dir=self.data, db_path=self.db,
+        )
+
+        self.assertIn("Root/A", report.failed)
+        self.assertNotIn("Root/A", report.removed)
+        index = DocIndex(self.db)
+        try:
+            self.assertIsNotNone(index.get("Root/A"))
+        finally:
+            index.close()
+
+    def test_sync_self_heals_missing_index_entry(self):
+        pages = [page("Root", 1, ["Root/A"]), page("Root/A", 10)]
+        sync(FakeClient(pages), prefix="Root", data_dir=self.data, db_path=self.db)
+
+        index = DocIndex(self.db)
+        index.delete("Root/A")
+        index.commit()
+        index.close()
+
+        report = sync(FakeClient(pages), prefix="Root", data_dir=self.data, db_path=self.db)
+
+        self.assertIn("Root/A", report.unchanged)
+        index = DocIndex(self.db)
+        try:
+            self.assertIsNotNone(index.get("Root/A"))
+        finally:
+            index.close()
 
 
 if __name__ == "__main__":

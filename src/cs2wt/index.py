@@ -13,7 +13,7 @@ import re
 import sqlite3
 from pathlib import Path
 
-from .htmlparse import html_to_markdown, page_url
+from .htmlparse import BASE_URL, html_to_markdown, page_url
 from .store import raw_path
 
 _SCHEMA = """
@@ -144,6 +144,7 @@ def build_index(data_dir: str | Path, db_path: str | Path) -> DocIndex:
     """Build (or rebuild) an index from a crawl directory."""
     data_dir = Path(data_dir)
     manifest = json.loads((data_dir / "manifest.json").read_text(encoding="utf-8"))
+    base = manifest.get("source") or BASE_URL
 
     index = DocIndex(db_path)
     for record in manifest["pages"]:
@@ -153,7 +154,7 @@ def build_index(data_dir: str | Path, db_path: str | Path) -> DocIndex:
             content=html_to_markdown(raw),
             revid=record["revid"],
             timestamp=record["timestamp"],
-            url=page_url(record["title"]),
+            url=page_url(record["title"], base),
         )
     index.set_meta("generated_at", manifest["generated_at"])
     index.set_meta("prefix", manifest["prefix"])

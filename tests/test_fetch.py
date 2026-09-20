@@ -16,10 +16,24 @@ class FakeClient:
     def __init__(self, pages):
         self._pages = pages
 
-    def iter_pages(self, prefix, seeds=(), known=None):
+    def iter_pages(self, prefix, seeds=(), known=None, failed=None):
         # The real client BFS-discovers the tree; this fake yields the fixed set
         # of pages it holds, treating them as already reachable from ``prefix``.
         for title in dict.fromkeys([prefix, *seeds, *self._pages]):
+            page = self._pages.get(title)
+            if page is not None:
+                yield page
+
+
+class FlakyClient(FakeClient):
+    """Fake whose ``Bad`` page fails to fetch and is recorded in ``failed``."""
+
+    def iter_pages(self, prefix, seeds=(), known=None, failed=None):
+        if failed is not None:
+            failed.append("Bad")
+        for title in dict.fromkeys([prefix, *seeds, *self._pages]):
+            if title == "Bad":
+                continue
             page = self._pages.get(title)
             if page is not None:
                 yield page
@@ -43,6 +57,18 @@ class FetchTest(unittest.TestCase):
             self.assertEqual(manifest["source"], client.base_url)
             on_disk = json.loads((Path(d) / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(on_disk["page_count"], 2)
+
+    def test_crawl_tolerates_page_failure(self):
+        with tempfile.TemporaryDirectory() as d:
+            client = FlakyClient(
+                {"Root": page("Root", 1), "A": page("A", 2), "Bad": page("Bad", 3)}
+            )
+            manifest = crawl(client, prefix="Root", out_dir=d)
+
+            titles = [record["title"] for record in manifest["pages"]]
+            self.assertIn("Root", titles)
+            self.assertIn("A", titles)
+            self.assertNotIn("Bad", titles)
 
 
 if __name__ == "__main__":

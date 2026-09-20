@@ -26,7 +26,8 @@ def crawl(
     seeds = [record["title"] for record in store.load_manifest(out_dir).get("pages", [])]
 
     records: list[dict] = []
-    for page in client.iter_pages(prefix, seeds=seeds):
+    failed: list[str] = []
+    for page in client.iter_pages(prefix, seeds=seeds, failed=failed):
         store.raw_path(out_dir, page.title).write_text(page.html, encoding="utf-8")
         records.append(
             {
@@ -37,6 +38,9 @@ def crawl(
             }
         )
         print(f"  fetched {page.title} (rev {page.revid})")
+
+    if failed:
+        print(f"  failed {len(failed)} page(s): {', '.join(failed)}")
 
     manifest = {
         "source": client.base_url,
