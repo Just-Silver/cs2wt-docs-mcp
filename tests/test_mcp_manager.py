@@ -1,8 +1,11 @@
+import sqlite3
 import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from cs2wt.index import DocIndex
 from cs2wt.mcp_config import ServerConfig
 from cs2wt.mcp_manager import IndexManager
 
@@ -18,6 +21,20 @@ def make_config(tmp: str, refresh: bool) -> ServerConfig:
         delay=0.0,
         refresh=refresh,
     )
+
+
+def seed_index(cfg: ServerConfig) -> None:
+    index = DocIndex(cfg.db)
+    index.upsert(
+        pageid=1,
+        title="Page",
+        content="hello world",
+        revid=1,
+        timestamp="t",
+        url="u",
+    )
+    index.commit()
+    index.close()
 
 
 class IndexManagerTest(unittest.TestCase):
@@ -62,6 +79,48 @@ class IndexManagerTest(unittest.TestCase):
             info = mgr.info()
             self.assertIn("state", info)
             self.assertIn("count", info)
+            mgr.close()
+
+    def test_close_prevents_reopen_by_refresh_thread(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = make_config(d, refresh=True)
+            seed_index(cfg)
+            entered = threading.Event()
+            release = threading.Event()
+
+            def slow_refresh(config, has_index):
+                entered.set()
+                release.wait(5)
+
+            mgr = IndexManager(cfg, refresher=slow_refresh)
+            mgr.start()
+            self.assertTrue(entered.wait(5))
+
+            mgr.close()
+            self.assertIsNone(mgr._reader)
+
+            release.set()
+            mgr.join(5)
+
+            # The refresh thread's finally must not resurrect the reader.
+            self.assertIsNone(mgr._reader)
+            self.assertEqual(mgr.search("hello"), [])
+
+    def test_reopen_failure_keeps_previous_reader(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = make_config(d, refresh=False)
+            seed_index(cfg)
+            mgr = IndexManager(cfg)
+            self.assertEqual(len(mgr.search("hello")), 1)
+
+            with mock.patch(
+                "cs2wt.mcp_manager.DocIndex", side_effect=sqlite3.Error("boom")
+            ):
+                mgr._reopen_reader()
+
+            # The old reader must remain open and usable, not a dead handle.
+            self.assertEqual(len(mgr.search("hello")), 1)
+            self.assertIsNone(mgr.error)
             mgr.close()
 
 

@@ -68,6 +68,7 @@ class IndexManager:
         self._error: str | None = None
         self._thread: threading.Thread | None = None
         self._reader: DocIndex | None = None
+        self._closed = False
         if Path(config.db).exists():
             self._reader = DocIndex(config.db, wal=True, check_same_thread=False)
 
@@ -94,13 +95,17 @@ class IndexManager:
 
     def _reopen_reader(self) -> None:
         with self._lock:
-            if not Path(self.config.db).exists():
+            if self._closed or not Path(self.config.db).exists():
                 return
+            try:
+                new_reader = DocIndex(
+                    self.config.db, wal=True, check_same_thread=False
+                )
+            except (sqlite3.Error, OSError):
+                return  # keep the previous reader rather than a dead one
             if self._reader is not None:
                 self._reader.close()
-            self._reader = DocIndex(
-                self.config.db, wal=True, check_same_thread=False
-            )
+            self._reader = new_reader
 
     def join(self, timeout: float | None = None) -> None:
         if self._thread is not None:
@@ -108,6 +113,7 @@ class IndexManager:
 
     def close(self) -> None:
         with self._lock:
+            self._closed = True
             if self._reader is not None:
                 self._reader.close()
                 self._reader = None
