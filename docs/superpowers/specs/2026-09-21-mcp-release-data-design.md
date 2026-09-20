@@ -37,6 +37,9 @@
   4. 相同、或本地更新（本地自抓）→ 跳过。
 - 时间比较先 `datetime.fromisoformat` 解析再比；**无法解析视为有更新**（保守下载）。
 - 不逐页比对 `revid`：产物整包发布，页级 revid 已在包内，无需网络往返逐页检测。
+- **启动节流**：每次启动都做上述检查，但若上次**成功**检查距今不足 `check_interval`
+  （默认 24 小时）则跳过；**无本地索引时忽略节流、必定下载**。检查成功即记录时间
+  （存于 `<data-dir>/last_check.json`）；失败不记录，下次启动重试。
 
 ## 4. 启动流程
 
@@ -62,6 +65,7 @@
 
 - `release_repo`：默认 `Just-Silver/cs2wt-docs-mcp`，env `CS2WT_RELEASE_REPO`，`--release-repo` 覆盖（fork 用）。
 - `release_tag`：默认 `data-latest`，env `CS2WT_RELEASE_TAG`，`--release-tag` 覆盖。
+- `check_interval`：启动检查节流秒数，默认 `86400`（24 小时），env `CS2WT_CHECK_INTERVAL`，`--check-interval` 覆盖。
 
 **移除**：`ua`、`cookie`、`delay`、`prefix`——MCP 不再抓取。`info()` 的 `prefix` 改从索引 `meta` 读取。
 
@@ -72,7 +76,8 @@
 - `DEFAULT_REPO`、`RELEASE_TAG`、`HTTP_TIMEOUT`
 - `asset_url(repo, tag, name) -> str`
 - `update_from_release(config, has_index) -> Path | None`
-  返回待替换的临时 db 路径；无需更新返回 `None`。内部完成 manifest 下载、比对、db 下载与 manifest 落盘。
+  返回待替换的临时 db 路径；无需更新返回 `None`。内部完成节流判断、manifest 下载、比对、
+  db 下载与 manifest 落盘，并在成功检查后写 `<data-dir>/last_check.json`。
 
 `mcp_manager`：
 
@@ -92,6 +97,7 @@
 
 - 用 `mock.patch("cs2wt.release.urllib.request.urlopen")` 注入假响应。
 - 覆盖：首次全量下载；`generated_at` 相同跳过；远端更新触发替换；离线且有索引不报错；离线且无索引报错；`generated_at` 不可解析视为有更新；`asset_url` 构造；临时文件 + `os.replace` 且清理 wal/shm。
+- 节流：`check_interval` 内且有索引 → 不发请求；超时后 → 发请求；无索引 → 忽略节流必下载；检查失败不写 `last_check.json`。
 - `mcp_manager`：refresher 返回 staged 路径时替换并重开 reader；返回 `None` 时不动。
 
 ## 10. 风险

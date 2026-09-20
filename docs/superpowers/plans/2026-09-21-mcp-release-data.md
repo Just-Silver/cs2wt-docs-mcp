@@ -29,11 +29,12 @@ def update_from_release(config, has_index: bool) -> Path | None: ...
 **行为**
 
 1. `asset_url` 拼 `https://github.com/{repo}/releases/download/{tag}/{name}`。
-2. 下载远端 `manifest.json` → 解析 JSON → 取 `generated_at`。
-3. 本地 `generated_at`：优先 `docs.sqlite` 的 `meta` 表（只读打开），退回本地 `manifest.json`；都没有则视为无版本。
-4. 无需更新（`has_index` 且远端不更新）→ 返回 `None`。
-5. 需要更新：把 `docs.sqlite` 下载到 `<db>.tmp`，把远端 manifest 原子写入本地 `manifest.json`，返回 `<db>.tmp`。
-6. `has_index=True` 时捕获 `urllib` / `json` 错误，`print` 警告并返回 `None`；`has_index=False` 时向上抛。
+2. **节流**：`has_index` 且 `<data-dir>/last_check.json` 记录的**上次成功检查**距今 < `config.check_interval` 秒 → 直接返回 `None`（不发请求）。无索引时忽略节流。
+3. 下载远端 `manifest.json` → 解析 JSON → 取 `generated_at`。
+4. 本地 `generated_at`：优先 `docs.sqlite` 的 `meta` 表（只读打开），退回本地 `manifest.json`；都没有则视为无版本。
+5. 无需更新（`has_index` 且远端不更新）→ 记录检查时间、返回 `None`。
+6. 需要更新：把 `docs.sqlite` 下载到 `<db>.tmp`，把远端 manifest 原子写入本地 `manifest.json`，记录检查时间，返回 `<db>.tmp`。
+7. 检查**成功**才写 `last_check.json`；`has_index=True` 时捕获 `urllib` / `json` 错误，`print` 警告并返回 `None`（不写检查时间）；`has_index=False` 时向上抛。
 
 **测试**
 
@@ -42,8 +43,9 @@ def update_from_release(config, has_index: bool) -> Path | None: ...
 - 远端 `generated_at` 相同 → 返回 `None`，不下载 db。
 - 远端较新 → 返回 tmp 路径。
 - `generated_at` 不可解析 → 视为更新。
-- 有索引 + 网络异常 → 返回 `None`、不抛。
+- 有索引 + 网络异常 → 返回 `None`、不抛、不写 `last_check.json`。
 - 无索引 + 网络异常 → 抛。
+- 节流：`last_check.json` 在窗口内 → 不发请求；窗口外 → 发请求；无索引 → 忽略节流。
 
 **验收**：`python -m unittest discover -s tests -p "test_release.py" -v`
 
@@ -57,10 +59,11 @@ def update_from_release(config, has_index: bool) -> Path | None: ...
 
 - 新增 `release_repo`（`--release-repo` / `CS2WT_RELEASE_REPO` / 默认 `release.DEFAULT_REPO`）。
 - 新增 `release_tag`（`--release-tag` / `CS2WT_RELEASE_TAG` / 默认 `release.RELEASE_TAG`）。
+- 新增 `check_interval`（`--check-interval` / `CS2WT_CHECK_INTERVAL` / 默认 `86400` 秒）。
 - 移除 `ua` / `cookie` / `delay` / `prefix` 字段与对应参数、env。
 - `refresh` 语义不变（`--no-refresh` / `CS2WT_NO_REFRESH`）。
 
-**测试**：默认值、env 覆盖、argv 优先、`--no-refresh`。
+**测试**：默认值、env 覆盖、argv 优先、`--no-refresh`、`check_interval` 解析。
 
 **验收**：`python -m unittest discover -s tests -p "test_mcp_config.py" -v`
 
