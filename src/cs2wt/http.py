@@ -19,6 +19,28 @@ from .anubis import parse_challenge, solve
 PASS_PATH = "/.within.website/x/cmd/anubis/api/pass-challenge"
 DEFAULT_UA = "cs2wt-docs/0.1 (+local documentation indexer)"
 
+ALLOWED_HOST = "developer.valvesoftware.com"
+ANUBIS_PATH_PREFIX = "/.within.website/"
+
+
+def assert_allowed_url(url: str) -> None:
+    """Enforce the robots.txt contract: only GET /wiki/<title> on the VDC host.
+
+    The Anubis PoW handshake path is transport infrastructure, not a crawl
+    request, so it is exempt.
+    """
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme != "https" or parts.netloc != ALLOWED_HOST:
+        raise ValueError(f"disallowed host/scheme: {url!r}")
+    if parts.path.startswith(ANUBIS_PATH_PREFIX):
+        return
+    if parts.query or parts.fragment:
+        raise ValueError(f"disallowed query/fragment: {url!r}")
+    if not parts.path.startswith("/wiki/"):
+        raise ValueError(f"disallowed path: {url!r}")
+    if "/w/" in parts.path or "Special:" in parts.path:
+        raise ValueError(f"disallowed path: {url!r}")
+
 
 class AnubisSession:
     """A minimal throttled HTTP session with automatic PoW solving."""
@@ -59,6 +81,7 @@ class AnubisSession:
         self._last_request = time.monotonic()
 
     def _open(self, url: str) -> tuple[bytes, str]:
+        assert_allowed_url(url)
         self._throttle()
         request = urllib.request.Request(url, headers={"User-Agent": self.user_agent})
         with self._opener.open(request, timeout=self.timeout) as response:
