@@ -230,3 +230,5 @@ cookies.txt
 
 # tooling indexes
 .codegraph/
+# superpowers scratch
+.superpowers/
