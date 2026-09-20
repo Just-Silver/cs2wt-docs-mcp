@@ -48,19 +48,24 @@ def sync(
     report = SyncReport()
     cache: dict = {}
 
-    # 1. 已有页：逐页抓取，404 判定删除，否则按 revid 比对。
+    # 1. Existing pages: fetch each; a 404 removes it, otherwise compare revid.
     for title in local:
         page = client.fetch_page(title)
         if page is None:
             report.removed.append(title)
             continue
         cache[title] = page
-        if page.revid != local[title]["revid"]:
+        if page.title != title:
+            # The page was moved: the old key is stale and the new title is a
+            # fresh page (discovered as "added" in the BFS below).
+            report.removed.append(title)
+        elif page.revid != local[title]["revid"]:
             report.updated.append(title)
         else:
             report.unchanged.append(title)
 
-    # 2. 新页：从根页面 BFS 发现 manifest 之外的 title（复用 cache，避免重复抓取）。
+    # 2. New pages: BFS from the root to discover titles outside the manifest
+    #    (reusing the cache so already-fetched pages are not requested twice).
     for page in client.iter_pages(prefix, seeds=list(local), known=cache):
         if page.title not in local:
             report.added.append(page.title)

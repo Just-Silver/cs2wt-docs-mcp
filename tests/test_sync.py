@@ -26,16 +26,17 @@ def page(title, revid, links=()):
 class FakeClient:
     base_url = "https://developer.valvesoftware.com"
 
-    def __init__(self, pages, missing=()):
+    def __init__(self, pages, missing=(), redirects=None):
         self.pages = {p.title: p for p in pages}
         self.missing = set(missing)
+        self.redirects = dict(redirects or {})
         self.fetched = []
 
     def fetch_page(self, title):
         self.fetched.append(title)
         if title in self.missing:
             return None
-        return self.pages.get(title)
+        return self.pages.get(self.redirects.get(title, title))
 
     def iter_pages(self, prefix, seeds=(), known=None):
         known = {} if known is None else known
@@ -109,6 +110,25 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(report.removed, ["Root/B"])
         self.assertEqual(self._count(), 2)
         self.assertTrue((self.data / "raw" / "Root%2FB.html").exists())
+
+    def test_title_move_drops_old_key_and_adds_new(self):
+        sync(FakeClient([page("Root", 1, ["Root/Old"]), page("Root/Old", 10)]),
+             prefix="Root", data_dir=self.data, db_path=self.db)
+        # The page was moved: the old title now redirects to the new one.
+        report = sync(
+            FakeClient(
+                [page("Root", 1, ["Root/New"]), page("Root/New", 10)],
+                redirects={"Root/Old": "Root/New"},
+            ),
+            prefix="Root", data_dir=self.data, db_path=self.db,
+        )
+
+        self.assertEqual(report.removed, ["Root/Old"])
+        self.assertEqual(report.added, ["Root/New"])
+        index = DocIndex(self.db)
+        self.assertIsNone(index.get("Root/Old"))
+        self.assertIsNotNone(index.get("Root/New"))
+        index.close()
 
     def test_dry_run_fetches_but_writes_nothing(self):
         client = FakeClient([page("Root", 1, ["Root/A"]), page("Root/A", 10)])
