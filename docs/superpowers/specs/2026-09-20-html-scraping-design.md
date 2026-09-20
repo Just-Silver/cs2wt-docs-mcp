@@ -113,7 +113,7 @@ robots.txt"，与实现不符。
 - `/*?*title=Special:*`：要求存在 query 且含 `title=Special:` → 契约禁止 query → 不匹配。
 - `/*?*action=history`：要求存在 query 且含 `action=history` → 契约禁止 query → 不匹配。
 
-因此 `/wiki/<标题>` 形态**不匹配任何一条**。守卫把该结论固化为运行时不变式，并有单测（§12）。
+因此 `/wiki/<标题>` 形态**不匹配任何一条**。守卫把该结论固化为运行时不变式，并有单测（§13）。
 
 ## 4. 架构
 
@@ -244,7 +244,7 @@ HtmlClient.fetch_page(title)
 1. 枚举当前 title 集合（§5）：
    - **新增**：wiki 有、manifest 无；
    - **删除**：manifest 有、本次枚举无 → 从索引与 manifest 移除（raw 文件保留归档）。
-     仅当该页**明确返回 404** 时判定为删除；其它抓取失败保留原记录并计入失败清单（§10）。
+     仅当该页**明确返回 404** 时判定为删除；其它抓取失败保留原记录并计入失败清单（§11）。
 2. **变更检测**：对每个已有页比对 `revid`（从 HTML 的 `oldid` 提取）与 manifest。
 3. **优化**：抓取使用条件请求（`If-None-Match` / `If-Modified-Since`），未变返回 `304`，
    降低带宽；若站点/Anubis 不支持 304，则回退普通 GET（行为不变，仅多传字节）。
@@ -267,7 +267,120 @@ cs2wt build                  # 重建 FTS5 索引
 
 不实现 wikitext→HTML 的转换（无意义）。
 
-## 10. 错误处理
+## 10. GitHub Actions 定时更新与持久化
+
+### 10.1 为什么放 CI
+
+- 文档更新频率低（周级），无需本地常驻进程。
+- CI 有独立、稳定的公网出口与干净的 Python 环境，免去本地依赖与 Anubis cookie 维护。
+- 产物集中持久化；消费端（MCP/CLI）只下载产物，**永不访问源站**（与 §1.1 的离线设计一致）。
+
+### 10.2 触发（依据 GitHub Actions 官方文档）
+
+```yaml
+on:
+  schedule:
+    - cron: '17 3 * * 1'   # 每周一 03:17 UTC
+  workflow_dispatch:        # 手动兜底
+```
+
+官方要点（务必遵守）：
+
+- `schedule` 使用 **POSIX cron**，默认 **UTC**；最短间隔 5 分钟。
+- **高负载时会延迟甚至丢弃**排队的 job，尤其是整点。因此 cron 用 `:17` 错开整点。
+- 定时 workflow **只在默认分支的最新提交上运行**——必须合入 `main` 后 `schedule` 才生效。
+- **公共仓库连续 60 天无活动会自动禁用**定时 workflow。故必须提供 `workflow_dispatch`
+  作为手动兜底，并在 README 说明如何重新启用。
+
+### 10.3 Anubis 与 CI 的关键约束（IP 绑定）
+
+- Anubis 挑战绑定 `User-Agent` + **客户端 IP**（+ 周时间戳），cookie 约 7 天有效。
+- **GitHub 托管 runner 每次运行的出口 IP 不同**，上一轮持久化的 `cookies.txt` **不可复用**。
+- 因此 CI **每次运行都必须重新求解 PoW**（一次，难度 4 约几十万次哈希，秒级），
+  不要跨运行缓存 cookie。
+- `cookies.txt` **不得提交**（`.gitignore` 已忽略）；CI 内使用临时路径
+  `--cookie "$RUNNER_TEMP/cookies.txt"`。
+- 同一次运行内 `User-Agent` 必须稳定（沿用默认 `DEFAULT_UA`）。
+
+### 10.4 持久化方案
+
+`data/`、`cookies.txt`、`*.sqlite` 均已被 `.gitignore` 忽略，因此**不把数据提交进 `main`**。
+采用 **GitHub Releases（滚动 tag `data-latest`）** 作为主持久化：
+
+| 方案 | 结论 |
+|---|---|
+| **Release 资产（主）** | 存 `docs.sqlite` + `manifest.json`（可选 `raw.tar.gz`）。不受 `.gitignore` 影响、二进制不进 git 历史、**无过期**。用官方 `gh` CLI 读写，不引入第三方 action |
+| `data` 分支（备选） | `peaceiris/actions-gh-pages` + `force_orphan: true`，与 `TF2-Addons/tf2-cvar-scraper` 做法一致；需处理 `.gitignore` 与二进制分支 |
+| `actions/upload-artifact` | 默认 **90 天**后过期，**不适合**长期持久化，仅作调试用 |
+
+### 10.5 工作流骨架
+
+```yaml
+name: 更新文档索引
+
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: update-docs          # 带写回：串行排队，不取消
+  cancel-in-progress: false
+
+permissions:
+  contents: write             # 创建/更新 Release 需要
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -e .
+
+      - name: 还原已有索引
+        run: gh release download data-latest -D data --clobber || echo "首次运行：无历史数据"
+
+      - name: 增量同步（首次则全量）
+        run: |
+          if [ -f data/manifest.json ]; then
+            cs2wt sync --cookie "$RUNNER_TEMP/cookies.txt"
+          else
+            cs2wt fetch --cookie "$RUNNER_TEMP/cookies.txt"
+            cs2wt build
+          fi
+
+      - name: 发布产物
+        run: |
+          gh release view data-latest >/dev/null 2>&1 \
+            || gh release create data-latest --title "文档索引（滚动）" --notes "由 CI 自动更新"
+          gh release upload data-latest data/docs.sqlite data/manifest.json --clobber
+```
+
+要点：
+
+- `gh release download/upload` 是官方 CLI，runner 预装；`GH_TOKEN` 用内置 `GITHUB_TOKEN`。
+- 还原时必须**同时**取回 `docs.sqlite` 与 `manifest.json`——`sync` 只增量更新已变化页，
+  若只有 manifest 没有索引，会得到不完整的索引。
+- 用 `GITHUB_TOKEN` 产生的 Release 不会再触发其它 workflow（官方防递归行为），符合预期。
+- `concurrency` 不设 `cancel-in-progress: true`：带写回的运行被取消会丢产物。
+
+### 10.6 消费端
+
+- MCP/CLI 启动或首次部署时：`gh release download data-latest -D data --clobber`，
+  之后**完全离线**检索。
+- 可选：CI 额外把 `docs.sqlite` 发布到 GitHub Pages，供无 `gh` 环境的 HTTP 下载。
+
+### 10.7 频率建议
+
+每周一次足够（文档更新不频繁）。按 §8，HTML 通道的 `sync` 为 O(页数) 次往返，
+当前 41 页约 1 分钟，对 CI 完全无压力。
+
+## 11. 错误处理
 
 - 单页失败（网络错误、解析不到内容容器）**不中断整体**：记录并跳过，末尾汇总失败清单。
 - **区分 404 与瞬态失败**：`404` 视为页面已删除（可判定 removed）；其它错误保留原记录，
@@ -275,7 +388,7 @@ cs2wt build                  # 重建 FTS5 索引
 - Anubis 挑战失败沿用现有异常语义（`AnubisSession` 抛出）。
 - 枚举阶段某页抓取失败：不影响其它分支的 BFS（该页后续可被再次尝试或被列入失败清单）。
 
-## 11. CLI 变化
+## 12. CLI 变化
 
 - **移除** `--api`。
 - `fetch` / `sync` / `build` / `search` / `get` / `list` / `status` 语义保持。
@@ -283,7 +396,7 @@ cs2wt build                  # 重建 FTS5 索引
 - `list`：输出 `title`（去掉 pageid）。
 - `--delay`（默认 1.0）、`--ua`（必须稳定）、`--cookie` 保持。
 
-## 12. 测试（离线，不联网）
+## 13. 测试（离线，不联网）
 
 1. **合规守卫** `assert_allowed_url`：`/wiki/Foo` 通过；`/w/api.php`、`/w/Special:…`、
    `/wiki/Special:Export/Foo`、含 `?title=Special:`、含 `?action=history`、带任意 query
@@ -299,12 +412,12 @@ cs2wt build                  # 重建 FTS5 索引
 
 夹具为**自造的合成 HTML**，不提交任何 VDC 正文内容（版权与合规）。
 
-## 13. 依赖与打包
+## 14. 依赖与打包
 
 - 保持**零第三方依赖**：仅用 stdlib（`html.parser`、`urllib.parse`、`re`、`sqlite3`、`json`）。
 - `pyproject.toml` 无新增依赖。
 
-## 14. 风险与取舍
+## 15. 风险与取舍
 
 | 风险 | 说明 | 缓解 |
 |---|---|---|
@@ -313,11 +426,15 @@ cs2wt build                  # 重建 FTS5 索引
 | 保真度下降 | HTML 是渲染结果，非 wikitext | 已知取舍；raw 保留 HTML 可重建 |
 | 同步请求数上升 | 无法批量拿 revid | 条件请求（304）降低代价 |
 | 条件请求兼容性 | Anubis 下 304 行为待实测 | 不支持则回退普通 GET |
+| CI cookie 不可复用 | runner 出口 IP 每轮不同，Anubis cookie 失效 | CI 每轮重新求解 PoW（§10.3），不缓存 cookie |
+| CI 定时被禁用 | 公共仓库 60 天无活动自动禁用 `schedule` | 提供 `workflow_dispatch` 手动兜底并写入 README（§10.2） |
 
-## 15. 验收标准
+## 16. 验收标准
 
 1. 抓取过程中，HTTP 层发出的**每一个**请求都通过 `assert_allowed_url`（有单测与断言）。
 2. `cs2wt fetch` 能从零构建完整镜像（title/revid/timestamp/raw HTML/manifest）。
 3. `cs2wt sync` 能正确识别 added/updated/removed/unchanged 并更新索引。
 4. `cs2wt search` / `get` / `list` / `status` 在 title 键下正常工作。
 5. 全部单测通过；无第三方依赖新增。
+6. CI 工作流（`schedule` + `workflow_dispatch`）能完成"还原 → 同步/全量 → 建索引 → 发布
+   Release 资产"的闭环；首次无历史数据时走全量分支。
