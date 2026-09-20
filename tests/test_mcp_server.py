@@ -14,10 +14,9 @@ def make_config(tmp: str) -> ServerConfig:
     return ServerConfig(
         data_dir=Path(tmp),
         db=Path(tmp) / "docs.sqlite",
-        prefix="P",
-        ua="UA",
-        cookie=str(Path(tmp) / "cookies.txt"),
-        delay=0.0,
+        release_repo="owner/repo",
+        release_tag="data-latest",
+        check_interval=86400,
         refresh=False,
     )
 

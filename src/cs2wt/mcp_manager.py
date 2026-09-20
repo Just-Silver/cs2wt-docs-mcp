@@ -1,21 +1,20 @@
 """Index lifecycle for the MCP server.
 
-The reader is shared across handler threads; the background refresher uses
-its own connection.  WAL keeps the two from blocking each other.
+The reader is shared across handler threads.  A background thread downloads a
+newer index from GitHub Releases and atomically swaps it in; the reader is
+reopened afterwards so the new file is picked up.
 """
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import threading
 from pathlib import Path
 
-from .fetch import crawl
-from .http import AnubisSession
-from .index import DocIndex, build_index
+from . import release
+from .index import DocIndex
 from .mcp_config import ServerConfig
-from .sync import sync
-from .wiki import HtmlClient
 
 INITIALIZING = "INITIALIZING"
 REFRESHING = "REFRESHING"
@@ -51,33 +50,15 @@ def _probe_db(db: Path) -> str | None:
         conn.close()
 
 
-def _new_client(config: ServerConfig) -> HtmlClient:
-    session = AnubisSession(
-        user_agent=config.ua, cookie_path=config.cookie, delay=config.delay
-    )
-    return HtmlClient(session)
-
-
-def default_refresh(config: ServerConfig, has_index: bool) -> None:
-    """Full crawl when there is no index, incremental sync otherwise."""
-    client = _new_client(config)
-    if has_index:
-        sync(
-            client,
-            prefix=config.prefix,
-            data_dir=config.data_dir,
-            db_path=config.db,
-        )
-        return
-    crawl(client, prefix=config.prefix, out_dir=config.data_dir)
-    index = build_index(config.data_dir, config.db)
-    index.close()
+def default_update(config: ServerConfig, has_index: bool) -> Path | None:
+    """Stage a newer index from GitHub Releases (or return ``None``)."""
+    return release.update_from_release(config, has_index)
 
 
 class IndexManager:
     def __init__(self, config: ServerConfig, *, refresher=None) -> None:
         self.config = config
-        self._refresher = refresher or default_refresh
+        self._refresher = refresher or default_update
         self._lock = threading.Lock()
         self._state = READY
         self._error: str | None = None
@@ -112,13 +93,33 @@ class IndexManager:
     def _refresh(self) -> None:
         try:
             has_index = _indexed_count(self.config.db) > 0
-            self._refresher(self.config, has_index)
+            staged = self._refresher(self.config, has_index)
+            if staged is not None:
+                self._swap_in(staged)
             self._state = READY
         except Exception as exc:  # noqa: BLE001 - surfaced to the client
             self._error = f"{type(exc).__name__}: {exc}"
             self._state = ERROR
         finally:
             self._reopen_reader()
+
+    def _swap_in(self, staged: Path) -> None:
+        """Atomically replace the live db with a freshly staged one.
+
+        The reader must be closed first (Windows cannot overwrite an open
+        file) and any stale WAL/SHM sidecars removed so the new database is
+        not shadowed by leftover journal state.
+        """
+        db = Path(self.config.db)
+        with self._lock:
+            if self._reader is not None:
+                self._reader.close()
+                self._reader = None
+            for suffix in ("-wal", "-shm"):
+                side = db.with_name(db.name + suffix)
+                if side.exists():
+                    side.unlink()
+            os.replace(staged, db)
 
     def _reopen_reader(self) -> None:
         with self._lock:
@@ -157,14 +158,16 @@ class IndexManager:
 
     def info(self) -> dict:
         count = 0
+        prefix = ""
         with self._lock:
             if self._reader is not None:
                 count = self._reader.count()
+                prefix = self._reader.get_meta("prefix") or ""
         return {
             "state": self._state,
             "error": self._error,
             "count": count,
-            "prefix": self.config.prefix,
+            "prefix": prefix,
         }
 
     # -- reads -------------------------------------------------------------
