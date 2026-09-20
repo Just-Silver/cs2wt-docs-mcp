@@ -489,6 +489,14 @@ class HtmlToMarkdownTest(unittest.TestCase):
         self.assertNotIn("drop me", md)
         self.assertNotIn("var x", md)
 
+    def test_void_element_with_drop_class_does_not_swallow(self):
+        # void 元素无结束标签，命中丢弃类时不得进入 drop 模式吞掉后续正文
+        md = html_to_markdown(
+            '<div id="mw-content-text"><img class="metadata" src="x.png">'
+            "<p>keep me</p></div>"
+        )
+        self.assertIn("keep me", md)
+
     def test_falls_back_to_body(self):
         md = html_to_markdown("<html><body><p>plain</p></body></html>")
         self.assertEqual(md, "plain")
@@ -589,13 +597,15 @@ class _MarkdownParser(HTMLParser):
             if tag not in _VOID:
                 self.drop_depth += 1
             return
-        if tag in _DROP_TAGS or tag == "table":
-            self.drop_depth = 1
-            return
-        if attrs.get("id") in _DROP_IDS:
-            self.drop_depth = 1
-            return
-        if set(attrs.get("class", "").split()) & _DROP_CLASSES:
+        dropped = (
+            tag in _DROP_TAGS
+            or tag == "table"
+            or attrs.get("id") in _DROP_IDS
+            or bool(set(attrs.get("class", "").split()) & _DROP_CLASSES)
+        )
+        # Void elements have no end tag, so entering drop mode on one would
+        # swallow the rest of the document; they have no content to drop.
+        if dropped and tag not in _VOID:
             self.drop_depth = 1
             return
 
