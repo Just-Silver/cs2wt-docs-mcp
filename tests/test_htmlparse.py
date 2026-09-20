@@ -65,3 +65,49 @@ class ExtractLinksTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+from cs2wt.htmlparse import html_to_markdown
+
+PAGE = """
+<html><body>
+<div id="toc"><p>toc junk</p></div>
+<div id="mw-content-text" class="mw-body-content">
+  <h2><span class="mw-headline">Alpha</span></h2>
+  <p>Hello <b>bold</b> and <i>italic</i> with <code>x</code>.</p>
+  <ul><li>one</li><li>two</li></ul>
+  <pre>code line</pre>
+  <a href="/wiki/Path_corner">Path corner</a>
+  <a href="https://example.com">Ext</a>
+  <span class="mw-editsection">edit</span>
+  <table><tr><td>drop me</td></tr></table>
+  <script>var x = 1;</script>
+</div>
+</body></html>
+"""
+
+
+class HtmlToMarkdownTest(unittest.TestCase):
+    def test_conversion(self):
+        md = html_to_markdown(PAGE)
+        self.assertIn("## Alpha", md)
+        self.assertIn("Hello **bold** and *italic* with `x`.", md)
+        self.assertIn("- one", md)
+        self.assertIn("- two", md)
+        self.assertIn("```", md)
+        self.assertIn("code line", md)
+        self.assertIn("[Path corner](https://developer.valvesoftware.com/wiki/Path_corner)", md)
+        self.assertIn("[Ext](https://example.com)", md)
+        # dropped elements
+        self.assertNotIn("toc junk", md)
+        self.assertNotIn("edit", md)
+        self.assertNotIn("drop me", md)
+        self.assertNotIn("var x", md)
+
+    def test_falls_back_to_body(self):
+        md = html_to_markdown("<html><body><p>plain</p></body></html>")
+        self.assertEqual(md, "plain")
+
+
+if __name__ == "__main__":
+    unittest.main()

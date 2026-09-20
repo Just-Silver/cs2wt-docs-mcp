@@ -122,3 +122,176 @@ def extract_links(html: str) -> list[str]:
         seen.add(title)
         titles.append(title)
     return titles
+
+
+_DROP_TAGS = {"script", "style"}
+_DROP_IDS = {"toc"}
+_DROP_CLASSES = {
+    "mw-editsection", "navbox", "metadata", "mw-empty-elt", "noprint", "reference",
+}
+_HEADINGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
+_VOID = {
+    "br", "img", "hr", "meta", "link", "input", "wbr", "area", "base",
+    "col", "embed", "param", "track",
+}
+_CODE_BLOCKS = {"pre", "syntaxhighlight", "source"}
+
+
+def _absolute(href: str) -> str:
+    if href.startswith("//"):
+        return "https:" + href
+    if href.startswith("/"):
+        return BASE_URL + href
+    return href
+
+
+def _balanced(html: str, open_index: int) -> str:
+    match = re.match(r"<\s*([a-zA-Z0-9]+)", html[open_index:])
+    if not match:
+        return html[open_index:]
+    tag = match.group(1).lower()
+    pattern = re.compile(rf"</?{tag}\b[^>]*>", re.IGNORECASE)
+    depth = 0
+    for token in pattern.finditer(html, open_index):
+        text = token.group(0)
+        if text.startswith("</"):
+            depth -= 1
+            if depth == 0:
+                return html[open_index:token.end()]
+        else:
+            depth += 1
+    return html[open_index:]
+
+
+def _extract_container(html: str) -> str:
+    for marker in ('id="mw-content-text"', "class='mw-parser-output'", 'class="mw-parser-output"'):
+        index = html.find(marker)
+        if index != -1:
+            return _balanced(html, html.rfind("<", 0, index))
+    body = html.find("<body")
+    if body != -1:
+        return _balanced(html, body)
+    return html
+
+
+class _MarkdownParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.buf: list[str] = []
+        self.drop_depth = 0
+        self.lists: list[list] = []
+        self.links: list[str] = []
+        self.pre = 0
+        self.code = 0
+
+    # -- helpers -----------------------------------------------------------
+    def _tail(self) -> str:
+        return self.buf[-1][-1] if self.buf and self.buf[-1] else ""
+
+    def _write(self, text: str) -> None:
+        if text:
+            self.buf.append(text)
+
+    def _blank(self) -> None:
+        if self.buf:
+            self.buf.append("\n\n")
+
+    def _line(self) -> None:
+        if self.buf and self._tail() != "\n":
+            self.buf.append("\n")
+
+    # -- callbacks ---------------------------------------------------------
+    def handle_starttag(self, tag, attrs):
+        attrs = {key: (value or "") for key, value in attrs}
+        if self.drop_depth:
+            if tag not in _VOID:
+                self.drop_depth += 1
+            return
+        if tag in _DROP_TAGS or tag == "table":
+            self.drop_depth = 1
+            return
+        if attrs.get("id") in _DROP_IDS:
+            self.drop_depth = 1
+            return
+        if set(attrs.get("class", "").split()) & _DROP_CLASSES:
+            self.drop_depth = 1
+            return
+
+        if tag in _HEADINGS:
+            self._blank()
+            self._write("#" * int(tag[1]) + " ")
+        elif tag == "p":
+            self._blank()
+        elif tag == "br":
+            self._write("\n")
+        elif tag in ("ul", "ol"):
+            self._blank()
+            self.lists.append([tag == "ol", 0])
+        elif tag == "li":
+            self._line()
+            if self.lists:
+                self.lists[-1][1] += 1
+                ordered = self.lists[-1][0]
+                indent = "  " * (len(self.lists) - 1)
+                marker = f"{self.lists[-1][1]}. " if ordered else "- "
+                self._write(indent + marker)
+        elif tag in _CODE_BLOCKS:
+            self._blank()
+            self._write("```\n")
+            self.pre += 1
+        elif tag == "code":
+            if not self.pre:
+                self._write("`")
+                self.code += 1
+        elif tag in ("b", "strong"):
+            self._write("**")
+        elif tag in ("i", "em"):
+            self._write("*")
+        elif tag == "a":
+            href = attrs.get("href", "")
+            self.links.append(href)
+            if href:
+                self._write("[")
+
+    def handle_endtag(self, tag):
+        if self.drop_depth:
+            self.drop_depth -= 1
+            return
+        if tag in _HEADINGS or tag == "p":
+            self._write("\n")
+        elif tag in ("ul", "ol"):
+            if self.lists:
+                self.lists.pop()
+            self._write("\n")
+        elif tag == "li":
+            self._write("\n")
+        elif tag in _CODE_BLOCKS:
+            self._write("\n```\n")
+            self.pre = max(0, self.pre - 1)
+        elif tag == "code":
+            if self.code:
+                self._write("`")
+                self.code -= 1
+        elif tag in ("b", "strong"):
+            self._write("**")
+        elif tag in ("i", "em"):
+            self._write("*")
+        elif tag == "a":
+            href = self.links.pop() if self.links else ""
+            if href:
+                url = _absolute(href)
+                self._write(f"]({url})" if url else "]")
+
+    def handle_data(self, data):
+        if not self.drop_depth:
+            self._write(data)
+
+
+def html_to_markdown(html: str) -> str:
+    """Convert rendered MediaWiki HTML to readable Markdown."""
+    parser = _MarkdownParser()
+    parser.feed(_extract_container(html))
+    parser.close()
+    text = "".join(parser.buf)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
