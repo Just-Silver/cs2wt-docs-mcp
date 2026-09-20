@@ -1,8 +1,8 @@
 """Incremental sync between the local mirror and the wiki.
 
-Change detection is a full ``revid`` comparison driven by a single
-``generator=allpages`` + ``prop=revisions`` pass: no timestamp cursor to
-maintain, and added / removed / moved pages are all discovered naturally.
+Change detection compares the revision id parsed from each page's HTML.  A
+page's own 404 is the only signal for removal; link enumeration is used only to
+discover new pages, so an incomplete crawl can never cause a false deletion.
 """
 
 from __future__ import annotations
@@ -12,18 +12,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import store
-from .convert import wikitext_to_markdown
-from .index import DocIndex, page_url
-
-BATCH_SIZE = 20
+from .htmlparse import html_to_markdown, page_url
+from .index import DocIndex
 
 
 @dataclass
 class SyncReport:
-    added: list[int] = field(default_factory=list)
-    updated: list[int] = field(default_factory=list)
-    removed: list[int] = field(default_factory=list)
-    unchanged: list[int] = field(default_factory=list)
+    added: list[str] = field(default_factory=list)
+    updated: list[str] = field(default_factory=list)
+    removed: list[str] = field(default_factory=list)
+    unchanged: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
         return (
@@ -45,59 +43,59 @@ def sync(
     """Bring the local mirror in line with the wiki under ``prefix``."""
     data_dir = Path(data_dir)
     manifest = store.load_manifest(data_dir)
-    local = store.manifest_by_pageid(manifest)
-
-    remote = {p["pageid"]: p for p in client.iter_pages_with_revisions(prefix)}
+    local = store.manifest_by_title(manifest)
 
     report = SyncReport()
-    report.added = [pid for pid in remote if pid not in local]
-    report.removed = [pid for pid in local if pid not in remote]
-    for pid, remote_page in remote.items():
-        record = local.get(pid)
-        if record is None:
+    cache: dict = {}
+
+    # 1. 已有页：逐页抓取，404 判定删除，否则按 revid 比对。
+    for title in local:
+        page = client.fetch_page(title)
+        if page is None:
+            report.removed.append(title)
             continue
-        if remote_page["revid"] != record["revid"] or remote_page["title"] != record["title"]:
-            report.updated.append(pid)
+        cache[title] = page
+        if page.revid != local[title]["revid"]:
+            report.updated.append(title)
         else:
-            report.unchanged.append(pid)
+            report.unchanged.append(title)
+
+    # 2. 新页：从根页面 BFS 发现 manifest 之外的 title（复用 cache，避免重复抓取）。
+    for page in client.iter_pages(prefix, seeds=list(local), known=cache):
+        if page.title not in local:
+            report.added.append(page.title)
 
     if dry_run:
         return report
 
-    to_fetch = sorted(report.added + report.updated)
-    titles = [remote[pid]["title"] for pid in to_fetch]
-    records = store.manifest_by_pageid(manifest)
-
+    records = dict(local)
     store.raw_dir(data_dir).mkdir(parents=True, exist_ok=True)
-
     index = DocIndex(db_path)
     try:
-        for batch in store.chunks(titles, BATCH_SIZE):
-            for page in client.fetch_pages(batch):
-                store.raw_path(data_dir, page.pageid).write_text(
-                    page.content, encoding="utf-8"
-                )
-                records[page.pageid] = {
-                    "pageid": page.pageid,
-                    "title": page.title,
-                    "revid": page.revid,
-                    "timestamp": page.timestamp,
-                    "file": f"raw/{page.pageid}.wiki",
-                }
-                index.upsert(
-                    pageid=page.pageid,
-                    title=page.title,
-                    content=wikitext_to_markdown(page.content),
-                    revid=page.revid,
-                    timestamp=page.timestamp,
-                    url=page_url(page.title),
-                )
+        for title in sorted(set(report.added) | set(report.updated)):
+            page = cache.get(title) or client.fetch_page(title)
+            if page is None:
+                continue
+            store.raw_path(data_dir, page.title).write_text(page.html, encoding="utf-8")
+            records[page.title] = {
+                "title": page.title,
+                "revid": page.revid,
+                "timestamp": page.timestamp,
+                "file": f"raw/{store.slug(page.title)}.html",
+            }
+            index.upsert(
+                title=page.title,
+                content=html_to_markdown(page.html),
+                revid=page.revid,
+                timestamp=page.timestamp,
+                url=page_url(page.title),
+            )
 
-        for pid in report.removed:
-            records.pop(pid, None)
-            index.delete(pid)
+        for title in report.removed:
+            records.pop(title, None)
+            index.delete(title)
 
-        source = getattr(client, "api_url", "") or manifest.get("source", "")
+        source = getattr(client, "base_url", "") or manifest.get("source", "")
         manifest["pages"] = list(records.values())
         manifest["source"] = source
         manifest["prefix"] = prefix

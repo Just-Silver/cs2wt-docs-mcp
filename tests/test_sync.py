@@ -1,7 +1,4 @@
-"""Offline unit tests for incremental sync.
-
-A fake wiki client is injected so these tests never touch the network.
-"""
+"""Offline unit tests for incremental sync (fake HTML client, no network)."""
 
 import json
 import sys
@@ -16,43 +13,39 @@ from cs2wt.sync import sync
 from cs2wt.wiki import PageContent
 
 
-def page(pageid, title, revid):
-    return {
-        "pageid": pageid,
-        "title": title,
-        "revid": revid,
-        "timestamp": "2026-01-01T00:00:00Z",
-    }
+def page(title, revid, links=()):
+    anchors = "".join(f'<a href="/wiki/{link}">{link}</a>' for link in links)
+    return PageContent(
+        title=title,
+        revid=revid,
+        timestamp="2026-01-01T00:00:00Z",
+        html=f'<div id="mw-content-text"><p>{title} body</p>{anchors}</div>',
+    )
 
 
 class FakeClient:
-    api_url = "fake://api"
+    base_url = "https://developer.valvesoftware.com"
 
-    def __init__(self, pages, contents):
-        self.pages = [dict(p) for p in pages]
-        self.contents = dict(contents)
-        self.fetched_titles = []
+    def __init__(self, pages, missing=()):
+        self.pages = {p.title: p for p in pages}
+        self.missing = set(missing)
+        self.fetched = []
 
-    def iter_pages_with_revisions(self, prefix, namespace=0):
-        for p in self.pages:
-            yield dict(p)
+    def fetch_page(self, title):
+        self.fetched.append(title)
+        if title in self.missing:
+            return None
+        return self.pages.get(title)
 
-    def fetch_pages(self, titles):
-        by_title = {p["title"]: p for p in self.pages}
-        result = []
+    def iter_pages(self, prefix, seeds=(), known=None):
+        known = {} if known is None else known
+        titles = [prefix] + [t for t in self.pages if t.startswith(prefix) and t != prefix]
         for title in titles:
-            self.fetched_titles.append(title)
-            p = by_title[title]
-            result.append(
-                PageContent(
-                    pageid=p["pageid"],
-                    title=p["title"],
-                    revid=p["revid"],
-                    timestamp=p["timestamp"],
-                    content=self.contents[p["pageid"]],
-                )
-            )
-        return result
+            page_obj = known.get(title) or self.fetch_page(title)
+            if page_obj is None:
+                continue
+            known[title] = page_obj
+            yield page_obj
 
 
 class SyncTest(unittest.TestCase):
@@ -76,102 +69,54 @@ class SyncTest(unittest.TestCase):
             index.close()
 
     def test_first_sync_adds_everything(self):
-        client = FakeClient([page(1, "A", 10), page(2, "B", 20)], {1: "alpha", 2: "beta"})
-        report = sync(client, prefix="P", data_dir=self.data, db_path=self.db)
+        client = FakeClient([page("Root", 1, ["Root/A", "Root/B"]), page("Root/A", 10), page("Root/B", 20)])
+        report = sync(client, prefix="Root", data_dir=self.data, db_path=self.db)
 
-        self.assertEqual(sorted(report.added), [1, 2])
+        self.assertEqual(sorted(report.added), ["Root", "Root/A", "Root/B"])
         self.assertEqual(report.updated, [])
         self.assertEqual(report.removed, [])
-        self.assertEqual(report.unchanged, [])
-        self.assertEqual(self._count(), 2)
-        self.assertEqual(self._manifest()["page_count"], 2)
-        self.assertTrue((self.data / "raw" / "1.wiki").exists())
+        self.assertEqual(self._count(), 3)
+        self.assertTrue((self.data / "raw" / "Root%2FA.html").exists())
 
     def test_no_change_is_a_noop(self):
-        pages = [page(1, "A", 10), page(2, "B", 20)]
-        contents = {1: "alpha", 2: "beta"}
-        sync(FakeClient(pages, contents), prefix="P", data_dir=self.data, db_path=self.db)
+        pages = [page("Root", 1, ["Root/A"]), page("Root/A", 10)]
+        sync(FakeClient(pages), prefix="Root", data_dir=self.data, db_path=self.db)
+        client = FakeClient(pages)
+        report = sync(client, prefix="Root", data_dir=self.data, db_path=self.db)
 
-        client = FakeClient(pages, contents)
-        report = sync(client, prefix="P", data_dir=self.data, db_path=self.db)
-
-        self.assertEqual(sorted(report.unchanged), [1, 2])
-        self.assertEqual(report.added, [])
-        self.assertEqual(report.updated, [])
-        self.assertEqual(report.removed, [])
-        self.assertEqual(client.fetched_titles, [])
+        self.assertEqual(sorted(report.unchanged), ["Root", "Root/A"])
+        self.assertEqual(report.added + report.updated + report.removed, [])
 
     def test_revid_change_updates_page(self):
-        sync(
-            FakeClient([page(1, "A", 10)], {1: "old"}),
-            prefix="P",
-            data_dir=self.data,
-            db_path=self.db,
-        )
-        report = sync(
-            FakeClient([page(1, "A", 11)], {1: "new"}),
-            prefix="P",
-            data_dir=self.data,
-            db_path=self.db,
-        )
+        sync(FakeClient([page("Root", 1, ["Root/A"]), page("Root/A", 10)]),
+             prefix="Root", data_dir=self.data, db_path=self.db)
+        report = sync(FakeClient([page("Root", 1, ["Root/A"]), page("Root/A", 11)]),
+                      prefix="Root", data_dir=self.data, db_path=self.db)
 
-        self.assertEqual(report.updated, [1])
-        self.assertEqual(report.added, [])
-        self.assertEqual(self._manifest()["pages"][0]["revid"], 11)
+        self.assertEqual(report.updated, ["Root/A"])
         index = DocIndex(self.db)
-        self.assertIn("new", index.get(1)["content"])
-        index.close()
-
-    def test_title_move_is_an_update(self):
-        sync(
-            FakeClient([page(1, "Old Name", 10)], {1: "body"}),
-            prefix="P",
-            data_dir=self.data,
-            db_path=self.db,
-        )
-        report = sync(
-            FakeClient([page(1, "New Name", 10)], {1: "body"}),
-            prefix="P",
-            data_dir=self.data,
-            db_path=self.db,
-        )
-
-        self.assertEqual(report.updated, [1])
-        self.assertEqual(self._manifest()["pages"][0]["title"], "New Name")
-        index = DocIndex(self.db)
-        self.assertEqual(index.get(1)["title"], "New Name")
+        self.assertIn("Root/A body", index.get("Root/A")["content"])
         index.close()
 
     def test_removed_page_drops_from_index_but_keeps_raw(self):
-        sync(
-            FakeClient([page(1, "A", 10), page(2, "B", 20)], {1: "alpha", 2: "beta"}),
-            prefix="P",
-            data_dir=self.data,
-            db_path=self.db,
-        )
+        sync(FakeClient([page("Root", 1, ["Root/A", "Root/B"]), page("Root/A", 10), page("Root/B", 20)]),
+             prefix="Root", data_dir=self.data, db_path=self.db)
         report = sync(
-            FakeClient([page(1, "A", 10)], {1: "alpha"}),
-            prefix="P",
-            data_dir=self.data,
-            db_path=self.db,
+            FakeClient([page("Root", 1, ["Root/A"]), page("Root/A", 10)], missing={"Root/B"}),
+            prefix="Root", data_dir=self.data, db_path=self.db,
         )
 
-        self.assertEqual(report.removed, [2])
-        self.assertEqual(self._count(), 1)
-        self.assertEqual(self._manifest()["page_count"], 1)
-        # raw file is kept as an archive
-        self.assertTrue((self.data / "raw" / "2.wiki").exists())
+        self.assertEqual(report.removed, ["Root/B"])
+        self.assertEqual(self._count(), 2)
+        self.assertTrue((self.data / "raw" / "Root%2FB.html").exists())
 
-    def test_dry_run_reports_without_writing(self):
-        client = FakeClient([page(1, "A", 10)], {1: "alpha"})
-        report = sync(
-            client, prefix="P", data_dir=self.data, db_path=self.db, dry_run=True
-        )
+    def test_dry_run_fetches_but_writes_nothing(self):
+        client = FakeClient([page("Root", 1, ["Root/A"]), page("Root/A", 10)])
+        report = sync(client, prefix="Root", data_dir=self.data, db_path=self.db, dry_run=True)
 
-        self.assertEqual(report.added, [1])
+        self.assertEqual(sorted(report.added), ["Root", "Root/A"])
         self.assertFalse((self.data / "manifest.json").exists())
         self.assertFalse(self.db.exists())
-        self.assertEqual(client.fetched_titles, [])
 
 
 if __name__ == "__main__":
