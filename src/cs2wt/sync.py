@@ -1,8 +1,9 @@
 """Incremental sync between the local mirror and the wiki.
 
 Change detection compares the revision id parsed from each page's HTML.  A
-page's own 404 is the only signal for removal; link enumeration is used only to
-discover new pages, so an incomplete crawl can never cause a false deletion.
+page's own 404 or a redirect is the only signal for removal; PrefixIndex
+enumeration is used only to discover new pages, so an incomplete crawl can
+never cause a false deletion.
 """
 
 from __future__ import annotations
@@ -50,28 +51,27 @@ def sync(
     report = SyncReport()
     cache: dict = {}
 
-    # 1. Existing pages: fetch each; a 404 removes it, otherwise compare revid.
+    # 1. Existing pages: fetch each; a 404 or a redirect removes it, otherwise
+    #    compare revid.  Only real content is cached, so a redirect can never
+    #    be reused as a page body below.
     for title in local:
         try:
             page = client.fetch_page(title)
         except Exception:  # noqa: BLE001 - keep the record, never delete on error
             report.failed.append(title)
             continue
-        if page is None:
+        if page is None or page.is_redirect:
             report.removed.append(title)
             continue
         cache[title] = page
-        if page.title != title:
-            # The page was moved: the old key is stale and the new title is a
-            # fresh page (discovered as "added" in the BFS below).
-            report.removed.append(title)
-        elif page.revid != local[title]["revid"]:
+        if page.revid != local[title]["revid"]:
             report.updated.append(title)
         else:
             report.unchanged.append(title)
 
-    # 2. New pages: BFS from the root to discover titles outside the manifest
-    #    (reusing the cache so already-fetched pages are not requested twice).
+    # 2. New pages: PrefixIndex enumeration discovers titles outside the
+    #    manifest (reusing the cache so already-fetched pages are not
+    #    requested twice).
     for page in client.iter_pages(prefix, seeds=list(local), known=cache, failed=report.failed):
         if page.title not in local:
             report.added.append(page.title)

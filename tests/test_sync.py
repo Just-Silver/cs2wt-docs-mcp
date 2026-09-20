@@ -26,10 +26,10 @@ def page(title, revid, links=()):
 class FakeClient:
     base_url = "https://developer.valvesoftware.com"
 
-    def __init__(self, pages, missing=(), redirects=None, errors=()):
+    def __init__(self, pages, missing=(), redirects=(), errors=()):
         self.pages = {p.title: p for p in pages}
         self.missing = set(missing)
-        self.redirects = dict(redirects or {})
+        self.redirects = set(redirects)
         self.errors = set(errors)
         self.fetched = []
 
@@ -39,11 +39,25 @@ class FakeClient:
             raise RuntimeError(f"boom: {title}")
         if title in self.missing:
             return None
-        return self.pages.get(self.redirects.get(title, title))
+        if title in self.redirects:
+            # A redirect is a 200 page whose title is still the requested URL
+            # title; only the body/canonical target differs.
+            return PageContent(
+                title=title,
+                revid=None,
+                timestamp="2026-01-01T00:00:00Z",
+                html=(
+                    f'<div id="mw-content-text">'
+                    f'<span class="mw-redirectedfrom">(Redirected from {title})</span></div>'
+                ),
+                is_redirect=True,
+            )
+        return self.pages.get(title)
 
     def iter_pages(self, prefix, seeds=(), known=None, failed=None):
         known = {} if known is None else known
         titles = [prefix] + [t for t in self.pages if t.startswith(prefix) and t != prefix]
+        titles += [t for t in self.redirects if t.startswith(prefix)]
         for title in titles:
             page_obj = known.get(title)
             if page_obj is None:
@@ -53,9 +67,11 @@ class FakeClient:
                     if failed is not None:
                         failed.append(title)
                     continue
-            if page_obj is None:
+                if page_obj is None or page_obj.is_redirect:
+                    continue
+                known[title] = page_obj
+            if page_obj.is_redirect:
                 continue
-            known[title] = page_obj
             yield page_obj
 
 
@@ -121,6 +137,27 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(self._count(), 2)
         self.assertTrue((self.data / "raw" / "Root%2FB.html").exists())
 
+    def test_redirected_page_is_removed(self):
+        sync(FakeClient([page("Root", 1, ["Root/A"]), page("Root/A", 10)]),
+             prefix="Root", data_dir=self.data, db_path=self.db)
+        # The page now 200-renders as a redirect; it must leave the corpus.
+        report = sync(
+            FakeClient([page("Root", 1, ["Root/A"])], redirects={"Root/A"}),
+            prefix="Root", data_dir=self.data, db_path=self.db,
+        )
+
+        self.assertEqual(report.removed, ["Root/A"])
+        self.assertNotIn("Root/A", report.updated)
+        self.assertNotIn("Root/A", report.unchanged)
+        self.assertNotIn("Root/A", report.added)
+        self.assertEqual(self._count(), 1)
+        self.assertNotIn("Root/A", [r["title"] for r in self._manifest()["pages"]])
+        index = DocIndex(self.db)
+        try:
+            self.assertIsNone(index.get("Root/A"))
+        finally:
+            index.close()
+
     def test_title_move_drops_old_key_and_adds_new(self):
         sync(FakeClient([page("Root", 1, ["Root/Old"]), page("Root/Old", 10)]),
              prefix="Root", data_dir=self.data, db_path=self.db)
@@ -128,7 +165,7 @@ class SyncTest(unittest.TestCase):
         report = sync(
             FakeClient(
                 [page("Root", 1, ["Root/New"]), page("Root/New", 10)],
-                redirects={"Root/Old": "Root/New"},
+                redirects={"Root/Old"},
             ),
             prefix="Root", data_dir=self.data, db_path=self.db,
         )
