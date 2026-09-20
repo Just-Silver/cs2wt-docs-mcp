@@ -107,7 +107,7 @@ class DocIndex:
             for r in rows
         ]
 
-    def get(self, key) -> dict | None:
+    def get(self, key: str | int) -> dict | None:
         if isinstance(key, int) or (isinstance(key, str) and key.isdigit()):
             where, params = "rowid = ?", (int(key),)
         else:
