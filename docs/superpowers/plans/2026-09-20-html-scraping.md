@@ -1936,3 +1936,16 @@ git commit -m "文档：说明 HTML 抓取通道、title 键迁移与 CI 更新"
 | §8.3 条件请求 | **非目标**（规格允许回退，记入 README 后续） |
 | §10.7 MCP 从 Release 取数 | **非目标**（另立计划） |
 | §10.6 整轮兜底重跑 | **非目标**（`retry` action 已覆盖） |
+
+---
+
+## 最终评审修正（fix wave）
+
+最终整分支评审发现 3 条 Important + 1 条建议合并前修的 Minor，均已裁定修复：
+
+1. **重定向目标重校验**（`http.py`）：`_open` 只校验原始 URL，`HTTPRedirectHandler` 自动跟随的 301/302 目标不过守卫。新增 `_GuardedRedirectHandler`，在 `redirect_request` 里对 `newurl` 再调 `assert_allowed_url`；`build_opener` 改用它。
+2. **单页失败不中断整体**（`wiki.py` / `fetch.py` / `sync.py`）：规格 §8.1/§11 要求单页失败保留原记录、计入失败清单、不判为删除。`iter_pages` 增加 `failed` 列表参数并在单页抓取异常时跳过；`fetch.crawl` 末尾汇总失败；`SyncReport` 增加 `failed: list[str]`，步骤 1 的 `fetch_page` 加 try/except（非 404 异常记 failed、保留记录、不删），`summary()` 追加 `!N failed`。
+3. **索引自愈**（`sync.py`）：revid 未变的页在索引缺失时补 upsert（`index.list_titles()` 比对），避免 manifest 完整而索引残缺时静默提供不完整索引。
+4. **`page_url` 尊重自定义 base**（`sync.py` / `index.py`）：改用 `client.base_url` / manifest `source`，而非默认 VDC 主机。
+
+对应测试同步新增/更新；README 的「增量同步」失败语义改为"跳过该页、保留记录、计入失败清单"。
