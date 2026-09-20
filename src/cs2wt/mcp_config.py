@@ -7,10 +7,9 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from .http import DEFAULT_UA
+from . import release
 from .store import default_data_dir
 
-DEFAULT_PREFIX = "Counter-Strike 2 Workshop Tools"
 _TRUTHY = {"1", "true", "yes", "on"}
 
 
@@ -18,10 +17,9 @@ _TRUTHY = {"1", "true", "yes", "on"}
 class ServerConfig:
     data_dir: Path
     db: Path
-    prefix: str
-    ua: str
-    cookie: str
-    delay: float
+    release_repo: str
+    release_tag: str
+    check_interval: int
     refresh: bool
 
     @classmethod
@@ -32,33 +30,34 @@ class ServerConfig:
         parser = argparse.ArgumentParser(prog="cs2wt-mcp")
         parser.add_argument("--data-dir")
         parser.add_argument("--db")
-        parser.add_argument("--prefix")
-        parser.add_argument("--ua")
-        parser.add_argument("--cookie")
-        parser.add_argument("--delay", type=float)
+        parser.add_argument("--release-repo")
+        parser.add_argument("--release-tag")
+        parser.add_argument("--check-interval", type=int)
         parser.add_argument("--no-refresh", action="store_true")
         ns = parser.parse_args(argv)
 
         data_dir = ns.data_dir or env.get("CS2WT_DATA_DIR") or str(default_data_dir())
         db = ns.db or env.get("CS2WT_DB") or str(Path(data_dir) / "docs.sqlite")
-        prefix = ns.prefix or env.get("CS2WT_PREFIX") or DEFAULT_PREFIX
-        ua = ns.ua or env.get("CS2WT_UA") or DEFAULT_UA
-        cookie = (
-            ns.cookie
-            or env.get("CS2WT_COOKIE")
-            or str(Path(data_dir) / "cookies.txt")
+        release_repo = (
+            ns.release_repo
+            or env.get("CS2WT_RELEASE_REPO")
+            or release.DEFAULT_REPO
         )
-        delay = (
-            ns.delay if ns.delay is not None else float(env.get("CS2WT_DELAY", 1.0))
+        release_tag = (
+            ns.release_tag or env.get("CS2WT_RELEASE_TAG") or release.RELEASE_TAG
+        )
+        check_interval = (
+            ns.check_interval
+            if ns.check_interval is not None
+            else int(env.get("CS2WT_CHECK_INTERVAL", 86400))
         )
         refresh = not ns.no_refresh and env.get("CS2WT_NO_REFRESH", "").lower() not in _TRUTHY
 
         return cls(
             data_dir=Path(data_dir),
             db=Path(db),
-            prefix=prefix,
-            ua=ua,
-            cookie=cookie,
-            delay=delay,
+            release_repo=release_repo,
+            release_tag=release_tag,
+            check_interval=check_interval,
             refresh=refresh,
         )
