@@ -1202,7 +1202,9 @@ class FakeClient:
         self._pages = pages
 
     def iter_pages(self, prefix, seeds=(), known=None):
-        for title in [prefix, *seeds]:
+        # The real client BFS-discovers the tree; this fake yields the fixed set
+        # of pages it holds, treating them as already reachable from ``prefix``.
+        for title in dict.fromkeys([prefix, *seeds, *self._pages]):
             page = self._pages.get(title)
             if page is not None:
                 yield page
@@ -1221,8 +1223,9 @@ class FetchTest(unittest.TestCase):
             self.assertEqual((Path(d) / "raw" / "Root.html").read_text(encoding="utf-8"), "<h1>Root</h1>")
             self.assertEqual((Path(d) / "raw" / "A.html").exists(), True)
             titles = [record["title"] for record in manifest["pages"]]
-            self.assertEqual(titles, ["Root", "A"])
-            self.assertEqual(manifest["pages"][1]["file"], "raw/A.html")
+            # save_manifest sorts pages by title and mutates the dict in place
+            self.assertEqual(titles, ["A", "Root"])
+            self.assertEqual(manifest["pages"][0]["file"], "raw/A.html")
             self.assertEqual(manifest["source"], client.base_url)
             on_disk = json.loads((Path(d) / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(on_disk["page_count"], 2)
