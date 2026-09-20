@@ -46,18 +46,29 @@ VDC 的 `robots.txt` 禁止了 `/w/api.php`、`/w/Special:` 以及带 `title=Spe
 
 ## 安装
 
-无需第三方依赖，仅用 Python 标准库（Python ≥ 3.10）。
+要求 **Python ≥ 3.10**。抓取 / 解析 / CLI 路径只用标准库；MCP 服务端依赖官方
+[`mcp`](https://pypi.org/project/mcp/) SDK（`mcp>=2,<3`，当前唯一的运行时依赖）。
 
 ```bash
 pip install -e .
 ```
 
-或直接用源码运行：
+安装后得到两个入口：`cs2wt`（CLI）与 `cs2wt-mcp`（MCP 服务端，stdio）。
+不使用 MCP 时，也可直接用源码运行 CLI：
 
 ```bash
 set PYTHONPATH=src        # Windows (cmd)
 python -m cs2wt --help
 ```
+
+首次使用需先获取数据（**联网**、需通过 Anubis 挑战）：
+
+```bash
+cs2wt fetch     # 全量抓取 /wiki/<标题>，落盘 raw HTML
+cs2wt build     # 构建 FTS5 索引
+```
+
+之后检索完全离线。
 
 ## CLI 用法
 
@@ -97,6 +108,44 @@ cs2wt-mcp            # 以 stdio 启动
 
 启动后服务端立即就绪，并在后台执行一次刷新：本地无索引时自动全量抓取并建索引，
 已有索引时做增量同步。设置 `CS2WT_NO_REFRESH=1`（或 `--no-refresh`）可跳过刷新。
+
+### 在 OpenCode（V2）中接入
+
+OpenCode V2 在 `mcp.servers` 下配置 MCP 服务器；本地 stdio 服务器用 `"type": "local"`
+加 `"command"` 数组。把下面这段原样放进你**打开本仓库时**的 `opencode.jsonc`
+（或 `.opencode/opencode.jsonc`；放全局则用 `~/.config/opencode/opencode.jsonc`）：
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "cs2wt": {
+        "type": "local",
+        "command": ["cs2wt-mcp"],
+        "environment": {
+          "CS2WT_DATA_DIR": "E:/Code/Docs/cs2wt-docs-mcp/data"
+        }
+      }
+    }
+  }
+}
+```
+
+- `CS2WT_DATA_DIR` 指向本仓库的 `data/` 目录，**建议写绝对路径**，避免随工作目录变化。
+  不设时默认取当前工作目录下的 `data/`（OpenCode 的 `cwd` 默认即工作区）。
+- `cs2wt-mcp` 由 `pip install -e .` 安装。若它不在 `PATH` 上，把 `command` 换成
+  `["python", "-m", "cs2wt.mcp_server"]`（或写入入口脚本的绝对路径）。
+- 希望服务端**完全不访问源站**时：先在仓库里跑过 `cs2wt fetch && cs2wt build`，
+  再加 `"CS2WT_NO_REFRESH": "1"`（`environment` 的值都是字符串）。
+- 其余可用环境变量：`CS2WT_DB`、`CS2WT_PREFIX`、`CS2WT_UA`、`CS2WT_COOKIE`、`CS2WT_DELAY`。
+
+也可用 CLI 添加（会写入项目配置，保留其它设置）：
+
+```bash
+opencode mcp add cs2wt -- cs2wt-mcp
+opencode mcp list        # 连接正常时显示 connected
+```
 
 暴露的工具：
 
