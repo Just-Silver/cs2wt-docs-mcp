@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- 语言：代码注释/文档/commit 一律**简体中文**。
+- 语言：用户可见文档（README / spec / plan）与 commit 信息用**简体中文**；代码注释与 docstring 沿用现有代码库的**英文**风格（`http.py`、`index.py` 等均为英文）。
 - 运行环境：Python ≥3.10；**不新增任何第三方依赖**（`pyproject.toml` 无改动）。
 - robots 契约：只允许 `GET https://developer.valvesoftware.com/wiki/...`，query/fragment 必须为空，path 不含 `/w/`、不含 `Special:`；唯一例外是 Anubis 握手路径 `/.within.website/`（传输层内部，非抓取请求）。
 - 主键：`title`（彻底移除 `pageid`）。
