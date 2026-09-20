@@ -88,6 +88,7 @@ class HtmlClient:
         known = {} if known is None else known
         queue = [prefix, *seeds]
         visited: set[str] = set()
+        yielded: set[str] = set()
         while queue:
             title = queue.pop(0)
             if title in visited:
@@ -104,6 +105,11 @@ class HtmlClient:
                 if page is None:
                     continue
                 known[title] = page
+            if page.title in yielded:
+                # A different queued title redirected to a page we already
+                # yielded; skip it (its links were traversed on first yield).
+                continue
+            yielded.add(page.title)
             yield page
             for link in extract_links(page.html):
                 if link.startswith(prefix) and link not in visited:

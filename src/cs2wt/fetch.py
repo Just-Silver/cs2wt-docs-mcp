@@ -30,6 +30,9 @@ def crawl(
     seen: set[str] = set()
     failed: list[str] = []
     for page in client.iter_pages(prefix, seeds=seeds, failed=failed):
+        if page.title in seen:
+            # Defensive: two link titles may resolve to the same actual page.
+            continue
         store.raw_path(out_dir, page.title).write_text(page.html, encoding="utf-8")
         records.append(
             {

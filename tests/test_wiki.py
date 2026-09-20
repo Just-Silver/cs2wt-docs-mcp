@@ -98,6 +98,19 @@ class HtmlClientTest(unittest.TestCase):
         titles = [page.title for page in client.iter_pages("Root")]
         self.assertEqual(titles, ["Root", "Root/Child One", "Root/Child Two", "Root/Leaf"])
 
+    def test_iter_pages_dedups_same_actual_title(self):
+        # Two queued link titles ("A", "B") redirect to the same actual page
+        # ("T"); the page must be yielded once even though both were queued.
+        pages = {
+            f"{BASE}/wiki/T": page_html("T"),
+            f"{BASE}/wiki/A": page_html("T"),
+            f"{BASE}/wiki/B": page_html("T"),
+        }
+        client = HtmlClient(FakeSession(pages))
+        titles = [page.title for page in client.iter_pages("T", seeds=["A", "B"])]
+        self.assertEqual(titles.count("T"), 1)
+        self.assertEqual(titles, ["T"])
+
     def test_iter_pages_reuses_known_cache(self):
         session = FakeSession({f"{BASE}/wiki/Root": page_html("Root")})
         client = HtmlClient(session)

@@ -40,6 +40,19 @@ class FlakyClient(FakeClient):
                 yield page
 
 
+class DuplicateClient:
+    """Fake that yields a fixed sequence, allowing repeated titles."""
+
+    base_url = "https://developer.valvesoftware.com"
+
+    def __init__(self, pages):
+        self._pages = pages
+
+    def iter_pages(self, prefix, seeds=(), known=None, failed=None):
+        for page in self._pages:
+            yield page
+
+
 def page(title, revid):
     return PageContent(title=title, revid=revid, timestamp="t", html=f"<h1>{title}</h1>")
 
@@ -58,6 +71,16 @@ class FetchTest(unittest.TestCase):
             self.assertEqual(manifest["source"], client.base_url)
             on_disk = json.loads((Path(d) / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(on_disk["page_count"], 2)
+
+    def test_crawl_dedups_repeated_page_title(self):
+        with tempfile.TemporaryDirectory() as d:
+            client = DuplicateClient([page("Root", 1), page("Root", 1)])
+            manifest = crawl(client, prefix="Root", out_dir=d)
+
+            titles = [record["title"] for record in manifest["pages"]]
+            self.assertEqual(titles, ["Root"])
+            on_disk = json.loads((Path(d) / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(on_disk["page_count"], 1)
 
     def test_crawl_keeps_prior_record_for_still_failed_page(self):
         with tempfile.TemporaryDirectory() as d:
