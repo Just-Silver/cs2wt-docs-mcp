@@ -29,9 +29,9 @@ VDC 的 `robots.txt` 禁止了 `/w/api.php`、`/w/Special:` 以及带 `title=Spe
 `action=history` 查询的路径。因此本项目**不使用** MediaWiki Action API（`/w/api.php`），
 只请求渲染页面 **`/wiki/<标题>`**。
 
-唯一允许的请求形态被固化为运行时不变式，由 HTTP 层的守卫
+唯一允许的请求形态被固化为运行时不变式：URL 形态由 HTTP 层的守卫
 `cs2wt.http.assert_allowed_url(url)` 在**每次请求前**校验，违规立即抛
-`ValueError`（在请求发出前拦截）：
+`ValueError`（在请求发出前拦截）；请求方法由客户端 API 保证（`AnubisSession` 只暴露 `get`）：
 
 | 约束 | 值 |
 |---|---|
@@ -140,17 +140,17 @@ cookies.txt             # Anubis 认证 cookie（可复用，勿提交）
 - **已有页**：对 manifest 中每一页逐页抓取，比对 HTML 中的 `oldid`（revid）。
   - 返回 **404** → 判定删除，从索引与 manifest 移除（raw 文件保留归档）；
   - 返回 200 且 revid 变化 → 重抓、覆写 raw、更新索引；
-  - 其它失败（超时 / 网络 / 解析）→ 保留原记录，计入失败清单，**不判为删除**。
+  - 其它失败（超时 / 网络等）→ 异常直接抛出、本轮同步中止（`SyncReport` 无失败清单字段）；
+    由于删除只由 404 决定，中止不会造成误删。
 - **新页**：从根页面做 `/wiki/` 链接 BFS，发现 manifest 之外的 title 并抓取入库。
 
 枚举只用于**发现新增**；删除只由该页自身的 404 决定，因此枚举遗漏不会造成误删。
-与旧版 `list=allpages` 一次拿全量 revid 相比，现在同步是 O(页数) 次请求（多数为廉价的
-条件请求），此代价在文档中明确。
+与旧版 `list=allpages` 一次拿全量 revid 相比，现在同步是 O(页数) 次普通 GET 请求，
+此代价在文档中明确（条件请求见「后续项」）。
 
 ## 定时更新（GitHub Actions）
 
-`.github/workflows/update-docs.yml` 负责把数据产物集中持久化，MCP 与用户只从仓库取数，
-**永不访问源站**：
+`.github/workflows/update-docs.yml` 负责把数据产物集中持久化到 Release（供下载与分发）：
 
 - **触发**：`schedule` 每月 1 日 03:17 UTC 全量抓取一次（`fetch` + `build`），并发布到
   GitHub Release 滚动 tag **`data-latest`**（资产：`docs.sqlite` + `manifest.json`）。

@@ -28,7 +28,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub = parser.add_subparsers(dest="command", required=True)
 
-    fetch = sub.add_parser("fetch", help="download docs and write raw wikitext")
+    fetch = sub.add_parser("fetch", help="download docs and write raw HTML")
     fetch.add_argument("--prefix", default=DEFAULT_PREFIX, help="page title prefix to crawl")
 
     sync_parser = sub.add_parser("sync", help="incrementally update the local mirror")
