@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Offline CLI/MCP indexer for the Counter-Strike 2 Workshop Tools documentation"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["mcp>=2,<3"]
 
 [project.scripts]
 cs2wt = "cs2wt.cli:main"
