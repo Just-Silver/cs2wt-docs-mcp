@@ -1,8 +1,9 @@
 """SQLite FTS5 full-text index for the documentation.
 
 Everything lives in a single portable ``.sqlite`` file so it can be shipped
-with the docs.  ``pageid`` is used as the FTS ``rowid``, which makes per-page
-update/delete trivial (the basis for incremental sync).
+with the docs.  The page ``title`` is the logical key; the FTS ``rowid`` is
+reused across updates, which makes per-page update/delete trivial (the basis
+for incremental sync).
 """
 
 from __future__ import annotations
@@ -10,12 +11,10 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-import urllib.parse
 from pathlib import Path
 
-from .convert import wikitext_to_markdown
-
-WIKI_BASE = "https://developer.valvesoftware.com/wiki/"
+from .htmlparse import html_to_markdown, page_url
+from .store import raw_path
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -25,7 +24,6 @@ CREATE TABLE IF NOT EXISTS meta (
 CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(
     title,
     content,
-    pageid    UNINDEXED,
     revid     UNINDEXED,
     timestamp UNINDEXED,
     url       UNINDEXED,
@@ -40,10 +38,6 @@ def _fts_query(query: str) -> str:
     if not tokens:
         return '""'
     return " ".join(f'"{t}"' for t in tokens)
-
-
-def page_url(title: str) -> str:
-    return WIKI_BASE + urllib.parse.quote(title.replace(" ", "_"), safe="/")
 
 
 class DocIndex:
@@ -63,25 +57,27 @@ class DocIndex:
 
     # -- writes ------------------------------------------------------------
 
-    def upsert(
-        self,
-        *,
-        pageid: int,
-        title: str,
-        content: str,
-        revid: int,
-        timestamp: str,
-        url: str,
-    ) -> None:
-        self.conn.execute("DELETE FROM docs WHERE rowid = ?", (pageid,))
-        self.conn.execute(
-            "INSERT INTO docs(rowid, title, content, pageid, revid, timestamp, url) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (pageid, title, content, pageid, revid, timestamp, url),
-        )
+    def upsert(self, *, title, content, revid, timestamp, url) -> None:
+        row = self.conn.execute(
+            "SELECT rowid FROM docs WHERE title = ?", (title,)
+        ).fetchone()
+        if row is None:
+            self.conn.execute(
+                "INSERT INTO docs(title, content, revid, timestamp, url) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (title, content, revid, timestamp, url),
+            )
+        else:
+            rowid = row[0]
+            self.conn.execute("DELETE FROM docs WHERE rowid = ?", (rowid,))
+            self.conn.execute(
+                "INSERT INTO docs(rowid, title, content, revid, timestamp, url) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (rowid, title, content, revid, timestamp, url),
+            )
 
-    def delete(self, pageid: int) -> None:
-        self.conn.execute("DELETE FROM docs WHERE rowid = ?", (pageid,))
+    def delete(self, title: str) -> None:
+        self.conn.execute("DELETE FROM docs WHERE title = ?", (title,))
 
     def set_meta(self, key: str, value: str) -> None:
         self.conn.execute(
@@ -100,38 +96,39 @@ class DocIndex:
 
     def search(self, query: str, limit: int = 10) -> list[dict]:
         rows = self.conn.execute(
-            "SELECT pageid, title, url, "
+            "SELECT title, url, "
             "snippet(docs, 1, '[', ']', '…', 12) AS snippet, "
             "bm25(docs) AS score "
             "FROM docs WHERE docs MATCH ? ORDER BY score LIMIT ?",
             (_fts_query(query), limit),
         ).fetchall()
         return [
-            {"pageid": r[0], "title": r[1], "url": r[2], "snippet": r[3], "score": r[4]}
+            {"title": r[0], "url": r[1], "snippet": r[2], "score": r[3]}
             for r in rows
         ]
 
-    def get(self, pageid: int) -> dict | None:
+    def get(self, key) -> dict | None:
+        if isinstance(key, int) or (isinstance(key, str) and key.isdigit()):
+            where, params = "rowid = ?", (int(key),)
+        else:
+            where, params = "title = ?", (key,)
         row = self.conn.execute(
-            "SELECT pageid, title, revid, timestamp, url, content "
-            "FROM docs WHERE rowid = ?",
-            (pageid,),
+            "SELECT title, revid, timestamp, url, content FROM docs WHERE " + where,
+            params,
         ).fetchone()
         if not row:
             return None
-        keys = ("pageid", "title", "revid", "timestamp", "url", "content")
+        keys = ("title", "revid", "timestamp", "url", "content")
         return dict(zip(keys, row))
 
     def get_by_title(self, title: str) -> dict | None:
-        row = self.conn.execute(
-            "SELECT rowid FROM docs WHERE title = ?", (title,)
-        ).fetchone()
-        return self.get(row[0]) if row else None
+        return self.get(title)
 
-    def list_titles(self) -> list[tuple[int, str]]:
-        return self.conn.execute(
-            "SELECT pageid, title FROM docs ORDER BY title"
-        ).fetchall()
+    def list_titles(self) -> list[str]:
+        return [
+            row[0]
+            for row in self.conn.execute("SELECT title FROM docs ORDER BY title")
+        ]
 
     def count(self) -> int:
         return self.conn.execute("SELECT count(*) FROM docs").fetchone()[0]
@@ -150,11 +147,10 @@ def build_index(data_dir: str | Path, db_path: str | Path) -> DocIndex:
 
     index = DocIndex(db_path)
     for record in manifest["pages"]:
-        raw = (data_dir / record["file"]).read_text(encoding="utf-8")
+        raw = raw_path(data_dir, record["title"]).read_text(encoding="utf-8")
         index.upsert(
-            pageid=record["pageid"],
             title=record["title"],
-            content=wikitext_to_markdown(raw),
+            content=html_to_markdown(raw),
             revid=record["revid"],
             timestamp=record["timestamp"],
             url=page_url(record["title"]),
