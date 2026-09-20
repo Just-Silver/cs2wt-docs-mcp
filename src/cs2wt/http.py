@@ -21,13 +21,17 @@ DEFAULT_UA = "cs2wt-docs/0.1 (+local documentation indexer)"
 
 ALLOWED_HOST = "developer.valvesoftware.com"
 ANUBIS_PATH_PREFIX = "/.within.website/"
+PREFIX_INDEX_PATH_PREFIX = "/wiki/Special:PrefixIndex/"
 
 
 def assert_allowed_url(url: str) -> None:
     """Enforce the robots.txt contract: only GET /wiki/<title> on the VDC host.
 
-    The Anubis PoW handshake path is transport infrastructure, not a crawl
-    request, so it is exempt.
+    ``/wiki/Special:PrefixIndex/<prefix>`` is a clean path that robots.txt does
+    not disallow, so it is the one ``Special:`` route we allow (used to
+    enumerate pages).  All other ``Special:`` routes remain blocked.  The
+    Anubis PoW handshake path is transport infrastructure, not a crawl request,
+    so it is exempt.
     """
     parts = urllib.parse.urlsplit(url)
     if parts.scheme != "https" or parts.netloc != ALLOWED_HOST:
@@ -38,6 +42,8 @@ def assert_allowed_url(url: str) -> None:
         raise ValueError(f"disallowed query/fragment: {url!r}")
     if not parts.path.startswith("/wiki/"):
         raise ValueError(f"disallowed path: {url!r}")
+    if parts.path.startswith(PREFIX_INDEX_PATH_PREFIX):
+        return
     if "/w/" in parts.path or "Special:" in parts.path:
         raise ValueError(f"disallowed path: {url!r}")
 

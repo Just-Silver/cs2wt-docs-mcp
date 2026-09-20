@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from cs2wt.htmlparse import extract_links, extract_meta, page_url
+from cs2wt.htmlparse import extract_links, extract_meta, is_redirect, page_url
 
 FULL = """
 <html><body>
@@ -61,6 +61,23 @@ class ExtractLinksTest(unittest.TestCase):
             extract_links(LINKS),
             ["Path corner", "Ai goal assault"],
         )
+
+
+class IsRedirectTest(unittest.TestCase):
+    def test_redirect_page(self):
+        html = (
+            '<div id="mw-content-text">'
+            '<span class="mw-redirectedfrom">(Redirected from '
+            '<a href="/wiki/Scripting_API">Scripting API</a>)</span>'
+            "</div>"
+        )
+        self.assertTrue(is_redirect(html))
+
+    def test_normal_page(self):
+        self.assertFalse(is_redirect(FULL))
+
+    def test_empty(self):
+        self.assertFalse(is_redirect(""))
 
 
 if __name__ == "__main__":

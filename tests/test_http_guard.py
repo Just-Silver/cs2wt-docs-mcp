@@ -11,6 +11,8 @@ OK = [
     "https://developer.valvesoftware.com/wiki/Assault",
     "https://developer.valvesoftware.com/wiki/Path_corner",
     "https://developer.valvesoftware.com/.within.website/x/cmd/anubis/api/pass-challenge?id=1",
+    # PrefixIndex is the only Special: path allowed by robots.txt
+    "https://developer.valvesoftware.com/wiki/Special:PrefixIndex/Counter-Strike_2_Workshop_Tools",
 ]
 BAD = [
     "http://developer.valvesoftware.com/wiki/Assault",       # 非 https
@@ -18,6 +20,10 @@ BAD = [
     "https://developer.valvesoftware.com/w/api.php",         # Disallow
     "https://developer.valvesoftware.com/w/Special:Export",  # Disallow
     "https://developer.valvesoftware.com/wiki/Special:Export/Foo",
+    "https://developer.valvesoftware.com/wiki/Special:AllPages",   # 其他 Special: 仍禁
+    "https://developer.valvesoftware.com/wiki/Special:Random",
+    "https://developer.valvesoftware.com/w/Special:X",
+    "https://developer.valvesoftware.com/wiki/Special:PrefixIndex/X?from=Y",  # 带 query
     "https://developer.valvesoftware.com/wiki/Assault?title=Special:X",
     "https://developer.valvesoftware.com/wiki/Assault?action=history",
     "https://developer.valvesoftware.com/wiki/Assault#top",  # fragment

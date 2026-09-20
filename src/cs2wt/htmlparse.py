@@ -80,6 +80,11 @@ def extract_meta(html: str) -> dict:
     return {"title": title, "revid": parser.revid, "timestamp": timestamp}
 
 
+def is_redirect(html: str) -> bool:
+    """True when the rendered page is a MediaWiki redirect (not real content)."""
+    return "mw-redirectedfrom" in html
+
+
 _NON_ARTICLE_NS = {
     "special", "file", "image", "category", "template", "help", "talk",
     "user", "mediawiki", "module", "draft", "valve developer community",
