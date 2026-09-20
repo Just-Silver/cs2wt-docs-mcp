@@ -7,8 +7,8 @@
 渲染后的 **HTML**，转换为 Markdown 后写入单文件 **SQLite FTS5** 全文索引，之后检索
 **完全离线**、无需再访问网络。
 
-页面以 **`title` 为主键**（HTML 通道拿不到 `pageid`）。原始 HTML 是 source of truth，
-索引可随时由它重建。
+页面以 **URL 标题为主键**（HTML 通道拿不到 `pageid`，也不用页面的显示标题）——
+URL 标题唯一、稳定、与地址一致。原始 HTML 是 source of truth，索引可随时由它重建。
 
 ## 背景：为什么需要一个 Anubis 求解器
 
@@ -26,8 +26,9 @@ hex(sha256(randomData + str(nonce))) 以 difficulty 个 0 开头
 ## robots.txt 合规
 
 VDC 的 `robots.txt` 禁止了 `/w/api.php`、`/w/Special:` 以及带 `title=Special:` /
-`action=history` 查询的路径。因此本项目**不使用** MediaWiki Action API（`/w/api.php`），
-只请求渲染页面 **`/wiki/<标题>`**。
+`action=history` 查询的路径。因此本项目**不使用** MediaWiki Action API（`/w/api.php`）。
+请求的路径只有两种：渲染页面 **`/wiki/<标题>`**，以及用于枚举页面的
+**`/wiki/Special:PrefixIndex/<前缀>`**（干净路径、无 query，robots 未禁）。
 
 唯一允许的请求形态被固化为运行时不变式：URL 形态由 HTTP 层的守卫
 `cs2wt.http.assert_allowed_url(url)` 在**每次请求前**校验，违规立即抛
@@ -38,10 +39,10 @@ VDC 的 `robots.txt` 禁止了 `/w/api.php`、`/w/Special:` 以及带 `title=Spe
 | scheme + host | `https://developer.valvesoftware.com` |
 | path | 必须以 `/wiki/` 开头 |
 | query / fragment | 必须为空 |
-| path 内容 | 不得包含 `/w/`，不得包含 `Special:` |
+| path 内容 | 不得包含 `/w/`；`Special:` 仅放行 `/wiki/Special:PrefixIndex/` |
 | method | 仅 `GET` |
 
-四条 `Disallow` 规则均为路径 / 查询匹配，而 `/wiki/<标题>` 不含 query、不以 `/w/` 开头，
+四条 `Disallow` 规则均为路径 / 查询匹配，而上述两种路径都不含 query、不以 `/w/` 开头，
 故**不匹配任何一条**（有单测覆盖）。
 
 ## 安装
@@ -191,7 +192,7 @@ opencode mcp list        # 连接正常时显示 connected
 |---|---|
 | `anubis.py` | 解析并求解 Anubis PoW 挑战 |
 | `http.py` | 带 cookie jar 与限速的 HTTP 会话，自动过挑战；含合规守卫 `assert_allowed_url` |
-| `wiki.py` | HTML 客户端 `HtmlClient`：链接 BFS 枚举 + `/wiki/<标题>` 单页抓取 |
+| `wiki.py` | HTML 客户端 `HtmlClient`：PrefixIndex 枚举 + `/wiki/<标题>` 单页抓取 |
 | `htmlparse.py` | 从 HTML 提取元数据 / 链接，并转 Markdown（零依赖） |
 | `fetch.py` | 按前缀全量抓取文档树（raw HTML） |
 | `sync.py` | 增量同步（逐页 revid 比对，新增/更新/删除） |
@@ -205,16 +206,15 @@ opencode mcp list        # 连接正常时显示 connected
 `cs2wt sync` 分两条相互独立的路径：
 
 - **已有页**：对 manifest 中每一页逐页抓取，比对 HTML 中的 `oldid`（revid）。
-  - 返回 **404** → 判定删除，从索引与 manifest 移除（raw 文件保留归档）；
+  - 返回 **404**，或页面**变成重定向** → 判定删除，从索引与 manifest 移除（raw 文件保留归档）；
   - 返回 200 且 revid 变化 → 重抓、覆写 raw、更新索引；
   - 其它失败（超时 / 网络等）→ 单页在客户端层最多重试 `FETCH_RETRIES` 次
     （模块常量 `cs2wt.wiki.FETCH_RETRIES`，默认 3），仍失败则跳过该页、保留原记录，
     计入失败清单（`SyncReport.failed`），不判为删除。
-- **新页**：从根页面做 `/wiki/` 链接 BFS，发现 manifest 之外的 title 并抓取入库。
+- **新页**：用 `/wiki/Special:PrefixIndex/<前缀>` 枚举出全部页面，发现 manifest 之外的 title 并抓取入库。
 
-枚举只用于**发现新增**；删除只由该页自身的 404 决定，因此枚举遗漏不会造成误删。
-与旧版 `list=allpages` 一次拿全量 revid 相比，现在同步是 O(页数) 次普通 GET 请求，
-此代价在文档中明确（条件请求见「后续项」）。
+枚举只用于**发现新增**；删除只由该页自身的 404 / 重定向决定，因此枚举遗漏不会造成误删。
+同步仍是 O(页数) 次普通 GET 请求（条件请求见「后续项」）。
 
 ## 定时更新（GitHub Actions）
 
@@ -240,12 +240,12 @@ opencode mcp list        # 连接正常时显示 connected
 # 保留 data/manifest.json（fetch 会读取其 title 作为 BFS 种子）
 # 删除 data/docs.sqlite        # 旧 schema 不兼容
 # 删除 data/raw/*.wiki         # 旧格式，改用 raw/*.html
-cs2wt fetch                    # 以现有 manifest 的 title 为种子，HTML 全量抓取
+cs2wt fetch                    # PrefixIndex 全量枚举 + 以现有 manifest 的 title 为种子
 cs2wt build                    # 重建 FTS5 索引
 ```
 
 不提供 wikitext → HTML 的转换（无意义）。保留 `manifest.json` 是为了把它已有的 title
-并入 BFS 种子，避免因链接爬取遗漏而丢页。
+并入种子，作为 PrefixIndex 之外的兜底。
 
 > 若旧数据在仓库内的 `./data`：默认数据目录已改为用户级目录（见「安装」），给上面两条
 > 命令加 `--data-dir data` 即可继续用原位置。
@@ -255,8 +255,6 @@ cs2wt build                    # 重建 FTS5 索引
 - **条件请求（304）优化**：`sync` 目前逐页普通 GET，后续可用
   `If-None-Match` / `If-Modified-Since` 降低带宽；若站点 / Anubis 不支持 304，则回退普通
   GET，行为不变。
-- **MCP 只从 Release 取数**：后续让 MCP 通过纯 HTTPS 下载 `manifest.json` 比对
-  `generated_at`，有新版本时原子替换 `docs.sqlite`，从而完全不接触 VDC 源站。
 
 ## 测试
 
@@ -266,9 +264,10 @@ python -m unittest discover -s tests -v
 
 ## 合规
 
-VDC 内容通常为 **CC BY-NC-SA**。本项目只请求 robots.txt 允许的 `/wiki/<标题>` 路径
-（由 `assert_allowed_url` 硬约束），保持请求间隔（默认 `--delay 1.0`）。请仅作本地个人
-用途，分发时保留署名与许可。本仓库只包含代码，不包含抓取到的文档内容。
+VDC 内容通常为 **CC BY-NC-SA**。本项目只请求 robots.txt 允许的 `/wiki/<标题>` 与
+`/wiki/Special:PrefixIndex/<前缀>` 路径（由 `assert_allowed_url` 硬约束），保持请求间隔
+（默认 `--delay 1.0`）。请仅作本地个人用途，分发时保留署名与许可。本仓库只包含代码，
+不包含抓取到的文档内容。
 
 ## 许可证
 

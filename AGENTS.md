@@ -39,13 +39,13 @@ cs2wt-mcp                                                   # 以 stdio 启动 M
 
 ## 架构要点（不易从文件名看出）
 
-- **抓取只走 HTML 通道** `/wiki/<标题>`：VDC 的 robots.txt 禁止 `/w/api.php` 与 `/w/Special:`，MediaWiki Action API 已弃用。`http.py` 的 `assert_allowed_url` 是硬守卫，所有出站请求都经 `AnubisSession._open`。
-- **主键是 `title`**（HTML 拿不到 `pageid`）。raw 为 `<数据目录>/raw/<slug>.html`，`slug = urllib.parse.quote(title, safe="")`。
+- **抓取只走 HTML 通道**：仅两种路径——`/wiki/<标题>` 与枚举用的 `/wiki/Special:PrefixIndex/<前缀>`（干净路径，robots 未禁）。VDC 的 robots.txt 禁止 `/w/api.php` 与 `/w/Special:`，MediaWiki Action API 已弃用。`http.py` 的 `assert_allowed_url` 是硬守卫（`Special:` 仅放行 PrefixIndex），所有出站请求都经 `AnubisSession._open`。
+- **主键是 URL 标题**（HTML 拿不到 `pageid`；也不用页面 h1 显示标题——同一树里多个标题可能显示成同一个 h1）。raw 为 `<数据目录>/raw/<slug>.html`，`slug = urllib.parse.quote(title, safe="")`。
 - **数据目录默认是用户级全局目录**（`store.default_data_dir()`：Windows `%LOCALAPPDATA%\cs2wt-docs`、macOS `~/Library/Application Support/cs2wt-docs`、Linux `$XDG_DATA_HOME/cs2wt-docs`），CLI 与 MCP 共用；可用 `--data-dir` / `CS2WT_DATA_DIR` 覆盖。**绝不要把默认值改回相对 cwd 的 `data/`**——MCP 在用户自己的项目目录里运行，落 cwd 会污染用户工作区。
 - `data/`、`cookies.txt`、`*.sqlite`、`.superpowers/`、`.codegraph/` 均被 gitignore，**不要提交**。
-- `wiki.py` = `HtmlClient`：`/wiki/` 链接 BFS 枚举（站点无 sitemap）+ 单页抓取。单页瞬态失败按模块常量 `FETCH_RETRIES` / `FETCH_RETRY_DELAY`（`wiki.py` 顶部）重试；404 不重试。
+- `wiki.py` = `HtmlClient`：用 `Special:PrefixIndex/<前缀>` 枚举（站点无 sitemap；链接 BFS 会漏孤儿页）+ 单页抓取；重定向页（HTML 含 `mw-redirectedfrom`）跳过。单页与 PrefixIndex 请求都按模块常量 `FETCH_RETRIES` / `FETCH_RETRY_DELAY`（`wiki.py` 顶部）重试；404 不重试。
 - `htmlparse.py` 是零依赖 HTML 解析/转换模块（`extract_meta` / `extract_links` / `html_to_markdown`），已取代旧的 `convert.py`。
-- **同步语义**：删除**只**由页面自身 404 决定，链接枚举仅用于发现新增；标题重命名（重定向）表现为旧键 `removed` + 新键 `added`；revid 未变的页若索引缺失会补 upsert（自愈）。
+- **同步语义**：删除只由页面自身 **404 或变成重定向**决定，枚举仅用于发现新增；revid 未变的页若索引缺失会补 upsert（自愈）。
 - **Anubis**：挑战与 `User-Agent` + 客户端 IP 绑定，cookie 约 7 天；**整会话必须保持同一 UA**。CI runner 出口 IP 每轮不同，故每轮重新求解、不缓存 cookie。
 - **MCP 只从 GitHub Release 取数，永不访问 VDC**：`release.py` 拉 `data-latest` 的 `manifest.json` 比对 `generated_at`，较新才整包下载 `docs.sqlite`，由 `IndexManager._swap_in` 原子替换（先关 reader、清 `-wal`/`-shm`，否则 Windows 覆盖失败 / 旧 WAL 污染新库）；启动检查按 `check_interval`（默认 24h，记于 `<数据目录>/last_check.json`）节流，**无本地索引时忽略节流**。CLI 的 `fetch`/`sync` 仅供维护者 / CI 自建数据。
 - 索引：单文件 SQLite **FTS5**，`title` 为键，`rowid` 跨同步稳定（`upsert` 复用 rowid）。
