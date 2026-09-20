@@ -140,7 +140,9 @@ cookies.txt             # Anubis 认证 cookie（可复用，勿提交）
 - **已有页**：对 manifest 中每一页逐页抓取，比对 HTML 中的 `oldid`（revid）。
   - 返回 **404** → 判定删除，从索引与 manifest 移除（raw 文件保留归档）；
   - 返回 200 且 revid 变化 → 重抓、覆写 raw、更新索引；
-  - 其它失败（超时 / 网络等）→ 跳过该页、保留原记录，计入失败清单（`SyncReport.failed`），不判为删除。
+  - 其它失败（超时 / 网络等）→ 单页在客户端层最多重试 `FETCH_RETRIES` 次
+    （模块常量 `cs2wt.wiki.FETCH_RETRIES`，默认 3），仍失败则跳过该页、保留原记录，
+    计入失败清单（`SyncReport.failed`），不判为删除。
 - **新页**：从根页面做 `/wiki/` 链接 BFS，发现 manifest 之外的 title 并抓取入库。
 
 枚举只用于**发现新增**；删除只由该页自身的 404 决定，因此枚举遗漏不会造成误删。
@@ -158,6 +160,8 @@ cookies.txt             # Anubis 认证 cookie（可复用，勿提交）
   Actions 页面手动触发，或对仓库产生一次提交以重新启用。
 - CI 每次运行的出口 IP 不同，上一轮的 Anubis cookie 不可复用，故每轮都重新求解 PoW，
   且**不把 cookie 提交进 git**（使用 `$RUNNER_TEMP` 临时路径）。
+- 抓取步骤用 `nick-fields/retry` 做整脚本重试，只覆盖**整轮失败**（如 Anubis / 网络整体
+  不可用）；单页失败已由客户端层的单页重试处理，不依赖整脚本重跑。
 
 ## 从旧版本迁移
 

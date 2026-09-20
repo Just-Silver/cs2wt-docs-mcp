@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from cs2wt import store
 from cs2wt.fetch import crawl
 from cs2wt.wiki import PageContent
 
@@ -57,6 +58,37 @@ class FetchTest(unittest.TestCase):
             self.assertEqual(manifest["source"], client.base_url)
             on_disk = json.loads((Path(d) / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(on_disk["page_count"], 2)
+
+    def test_crawl_keeps_prior_record_for_still_failed_page(self):
+        with tempfile.TemporaryDirectory() as d:
+            # Seed a prior manifest + raw file for the page that will fail.
+            raw = Path(d) / "raw"
+            raw.mkdir()
+            (raw / "Bad.html").write_text("<h1>Bad old</h1>", encoding="utf-8")
+            store.save_manifest(
+                d,
+                {
+                    "pages": [
+                        {"title": "Bad", "revid": 3, "timestamp": "t", "file": "raw/Bad.html"}
+                    ]
+                },
+            )
+
+            client = FlakyClient(
+                {"Root": page("Root", 1), "Bad": page("Bad", 3)}
+            )
+            manifest = crawl(client, prefix="Root", out_dir=d)
+
+            titles = [record["title"] for record in manifest["pages"]]
+            self.assertIn("Root", titles)
+            self.assertIn("Bad", titles)
+            bad = next(r for r in manifest["pages"] if r["title"] == "Bad")
+            self.assertEqual(bad["revid"], 3)
+            self.assertEqual(bad["file"], "raw/Bad.html")
+            # The archived raw file is preserved untouched.
+            self.assertEqual(
+                (raw / "Bad.html").read_text(encoding="utf-8"), "<h1>Bad old</h1>"
+            )
 
     def test_crawl_tolerates_page_failure(self):
         with tempfile.TemporaryDirectory() as d:

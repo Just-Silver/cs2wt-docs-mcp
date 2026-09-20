@@ -7,11 +7,15 @@ link BFS because the site has no sitemap.
 
 from __future__ import annotations
 
+import time
 import urllib.error
 from dataclasses import dataclass
 
 from .htmlparse import BASE_URL, extract_links, extract_meta, page_url
 from .http import AnubisSession
+
+FETCH_RETRIES = 3  # per-page attempts, including the first
+FETCH_RETRY_DELAY = 2.0  # seconds between attempts
 
 
 @dataclass(frozen=True)
@@ -23,22 +27,46 @@ class PageContent:
 
 
 class HtmlClient:
-    def __init__(self, session: AnubisSession, base_url: str = BASE_URL) -> None:
+    def __init__(
+        self,
+        session: AnubisSession,
+        base_url: str = BASE_URL,
+        *,
+        retries: int = FETCH_RETRIES,
+        retry_delay: float = FETCH_RETRY_DELAY,
+    ) -> None:
         self.session = session
         self.base_url = base_url.rstrip("/")
+        self.retries = max(1, retries)
+        self.retry_delay = retry_delay
 
     def page_url(self, title: str) -> str:
         return page_url(title, self.base_url)
 
     def fetch_page(self, title: str) -> PageContent | None:
-        """Fetch and parse one page; return ``None`` if it does not exist."""
+        """Fetch and parse one page; return ``None`` if it does not exist.
+
+        Transient failures (non-404 HTTP errors, network errors) are retried up
+        to ``self.retries`` times with ``self.retry_delay`` seconds between
+        attempts; the last error is re-raised if every attempt fails.
+        """
         url = self.page_url(title)
-        try:
-            html = self.session.get(url).decode("utf-8", "replace")
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404:
-                return None
-            raise
+        error: Exception | None = None
+        for attempt in range(self.retries):
+            try:
+                html = self.session.get(url).decode("utf-8", "replace")
+                break
+            except urllib.error.HTTPError as exc:
+                if exc.code == 404:
+                    return None
+                error = exc
+            except Exception as exc:  # noqa: BLE001 - retry transient failures
+                error = exc
+            if attempt + 1 < self.retries:
+                time.sleep(self.retry_delay)
+        else:
+            assert error is not None
+            raise error
         meta = extract_meta(html)
         return PageContent(
             title=meta["title"] or title,

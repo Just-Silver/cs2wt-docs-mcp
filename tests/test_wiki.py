@@ -34,6 +34,46 @@ class FakeSession:
         return self.pages[url]
 
 
+class FlakySession:
+    """Session that fails a fixed number of times before serving the page."""
+
+    def __init__(self, response, failures=0, code=500):
+        self.response = response
+        self.remaining = failures
+        self.code = code
+        self.calls = 0
+
+    def get(self, url):
+        self.calls += 1
+        if self.remaining > 0:
+            self.remaining -= 1
+            raise urllib.error.HTTPError(url, self.code, "error", {}, None)
+        return self.response
+
+
+class FetchRetryTest(unittest.TestCase):
+    def test_fetch_page_retries_transient_failure_then_succeeds(self):
+        session = FlakySession(page_html("A", revid=7), failures=1)
+        client = HtmlClient(session, retries=2, retry_delay=0)
+        page = client.fetch_page("A")
+        self.assertIsNotNone(page)
+        self.assertEqual(page.revid, 7)
+        self.assertEqual(session.calls, 2)
+
+    def test_fetch_page_raises_after_all_retries(self):
+        session = FlakySession(page_html("A"), failures=99)
+        client = HtmlClient(session, retries=3, retry_delay=0)
+        with self.assertRaises(urllib.error.HTTPError):
+            client.fetch_page("A")
+        self.assertEqual(session.calls, 3)
+
+    def test_fetch_page_404_is_not_retried(self):
+        session = FlakySession(page_html("A"), failures=99, code=404)
+        client = HtmlClient(session, retries=3, retry_delay=0)
+        self.assertIsNone(client.fetch_page("A"))
+        self.assertEqual(session.calls, 1)
+
+
 class HtmlClientTest(unittest.TestCase):
     def test_fetch_page_parses_meta(self):
         client = HtmlClient(FakeSession({f"{BASE}/wiki/A": page_html("A", revid=7)}))
@@ -77,7 +117,7 @@ class HtmlClientTest(unittest.TestCase):
             f"{BASE}/wiki/Root/Deep": page_html("Root/Deep"),
         }
         session = FakeSession(pages, errors={f"{BASE}/wiki/Root/Bad"})
-        client = HtmlClient(session)
+        client = HtmlClient(session, retry_delay=0)
         failed = []
         titles = [p.title for p in client.iter_pages("Root", failed=failed)]
 
