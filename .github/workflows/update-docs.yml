@@ -1,0 +1,41 @@
+name: 更新文档索引
+
+on:
+  schedule:
+    - cron: '17 3 1 * *'   # 每月 1 日 03:17 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: update-docs
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -e .
+
+      - name: 全量抓取并建索引（失败自动重试）
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 20
+          max_attempts: 3
+          retry_wait_seconds: 30
+          command: |
+            cs2wt fetch --cookie "$RUNNER_TEMP/cookies.txt"
+            cs2wt build
+
+      - name: 发布产物
+        run: |
+          gh release view data-latest >/dev/null 2>&1 \
+            || gh release create data-latest --title "文档索引（滚动）" --notes "由 CI 自动更新"
+          gh release upload data-latest data/docs.sqlite data/manifest.json --clobber
