@@ -109,12 +109,23 @@ class HtmlToMarkdownTest(unittest.TestCase):
         self.assertEqual(md, "plain")
 
     def test_void_element_with_drop_class_does_not_swallow(self):
-        # void 元素无结束标签，命中丢弃类时不得进入 drop 模式吞掉后续正文
+        # A void element has no end tag; matching a drop class must not swallow
+        # the rest of the document.
         md = html_to_markdown(
             '<div id="mw-content-text"><img class="metadata" src="x.png">'
             "<p>keep me</p></div>"
         )
         self.assertIn("keep me", md)
+
+    def test_self_closing_void_inside_dropped_region(self):
+        # A self-closing void inside a dropped region must not end drop mode.
+        md = html_to_markdown(
+            '<div id="mw-content-text">'
+            '<div class="navbox">secret<br/>leaked</div><p>body</p></div>'
+        )
+        self.assertNotIn("secret", md)
+        self.assertNotIn("leaked", md)
+        self.assertIn("body", md)
 
 
 if __name__ == "__main__":

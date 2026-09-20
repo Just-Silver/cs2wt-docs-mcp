@@ -256,6 +256,8 @@ class _MarkdownParser(HTMLParser):
                 self._write("[")
 
     def handle_endtag(self, tag):
+        if tag in _VOID:
+            return  # self-closing void elements emit a spurious end tag
         if self.drop_depth:
             self.drop_depth -= 1
             return
