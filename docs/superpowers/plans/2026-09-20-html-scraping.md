@@ -1348,16 +1348,17 @@ def page(title, revid, links=()):
 class FakeClient:
     base_url = "https://developer.valvesoftware.com"
 
-    def __init__(self, pages, missing=()):
+    def __init__(self, pages, missing=(), redirects=None):
         self.pages = {p.title: p for p in pages}
         self.missing = set(missing)
+        self.redirects = dict(redirects or {})
         self.fetched = []
 
     def fetch_page(self, title):
         self.fetched.append(title)
         if title in self.missing:
             return None
-        return self.pages.get(title)
+        return self.pages.get(self.redirects.get(title, title))
 
     def iter_pages(self, prefix, seeds=(), known=None):
         known = {} if known is None else known
@@ -1418,6 +1419,25 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(report.updated, ["Root/A"])
         index = DocIndex(self.db)
         self.assertIn("Root/A body", index.get("Root/A")["content"])
+        index.close()
+
+    def test_title_move_drops_old_key_and_adds_new(self):
+        sync(FakeClient([page("Root", 1, ["Root/Old"]), page("Root/Old", 10)]),
+             prefix="Root", data_dir=self.data, db_path=self.db)
+        # The page was moved: the old title now redirects to the new one.
+        report = sync(
+            FakeClient(
+                [page("Root", 1, ["Root/New"]), page("Root/New", 10)],
+                redirects={"Root/Old": "Root/New"},
+            ),
+            prefix="Root", data_dir=self.data, db_path=self.db,
+        )
+
+        self.assertEqual(report.removed, ["Root/Old"])
+        self.assertEqual(report.added, ["Root/New"])
+        index = DocIndex(self.db)
+        self.assertIsNone(index.get("Root/Old"))
+        self.assertIsNotNone(index.get("Root/New"))
         index.close()
 
     def test_removed_page_drops_from_index_but_keeps_raw(self):
@@ -1503,19 +1523,24 @@ def sync(
     report = SyncReport()
     cache: dict = {}
 
-    # 1. 已有页：逐页抓取，404 判定删除，否则按 revid 比对。
+    # 1. Existing pages: fetch each; a 404 removes it, otherwise compare revid.
     for title in local:
         page = client.fetch_page(title)
         if page is None:
             report.removed.append(title)
             continue
         cache[title] = page
-        if page.revid != local[title]["revid"]:
+        if page.title != title:
+            # The page was moved: the old key is stale and the new title is a
+            # fresh page (discovered as "added" in the BFS below).
+            report.removed.append(title)
+        elif page.revid != local[title]["revid"]:
             report.updated.append(title)
         else:
             report.unchanged.append(title)
 
-    # 2. 新页：从根页面 BFS 发现 manifest 之外的 title（复用 cache，避免重复抓取）。
+    # 2. New pages: BFS from the root to discover titles outside the manifest
+    #    (reusing the cache so already-fetched pages are not requested twice).
     for page in client.iter_pages(prefix, seeds=list(local), known=cache):
         if page.title not in local:
             report.added.append(page.title)
