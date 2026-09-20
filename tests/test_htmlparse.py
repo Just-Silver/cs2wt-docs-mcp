@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from cs2wt.htmlparse import extract_meta, page_url
+from cs2wt.htmlparse import extract_links, extract_meta, page_url
 
 FULL = """
 <html><body>
@@ -37,6 +37,29 @@ class ExtractMetaTest(unittest.TestCase):
         self.assertEqual(
             page_url("Path corner"),
             "https://developer.valvesoftware.com/wiki/Path_corner",
+        )
+
+
+LINKS = """
+<div id="mw-content-text">
+<a href="/wiki/Path_corner">Path corner</a>
+<a href="/wiki/Path_corner">dup</a>
+<a href="/wiki/Ai_goal_assault#top">fragment</a>
+<a href="/wiki/Special:Search">special</a>
+<a href="/wiki/File:Logo.png">file</a>
+<a href="/wiki/Template:Note">template</a>
+<a href="/w/index.php?title=X">api path</a>
+<a href="https://example.com/wiki/External">external</a>
+<a href="//example.com/wiki/Proto">protocol-relative</a>
+</div>
+"""
+
+
+class ExtractLinksTest(unittest.TestCase):
+    def test_filters_and_normalizes(self):
+        self.assertEqual(
+            extract_links(LINKS),
+            ["Path corner", "Ai goal assault"],
         )
 
 

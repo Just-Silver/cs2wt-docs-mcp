@@ -78,3 +78,47 @@ def extract_meta(html: str) -> dict:
                 f"T{int(hour):02d}:{int(minute):02d}:00"
             )
     return {"title": title, "revid": parser.revid, "timestamp": timestamp}
+
+
+_NON_ARTICLE_NS = {
+    "special", "file", "image", "category", "template", "help", "talk",
+    "user", "mediawiki", "module", "draft", "valve developer community",
+}
+
+
+class _LinkParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.hrefs: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "a":
+            href = dict(attrs).get("href")
+            if href:
+                self.hrefs.append(href)
+
+
+def extract_links(html: str) -> list[str]:
+    """Return normalized, de-duplicated article titles linked from ``html``."""
+    parser = _LinkParser()
+    parser.feed(html)
+    parser.close()
+
+    titles: list[str] = []
+    seen: set[str] = set()
+    for href in parser.hrefs:
+        parts = urllib.parse.urlsplit(href)
+        if parts.scheme or parts.netloc:  # external / protocol-relative
+            continue
+        if not parts.path.startswith("/wiki/"):
+            continue
+        title = urllib.parse.unquote(parts.path[len("/wiki/"):])
+        title = title.replace("_", " ").strip()
+        if not title or title in seen:
+            continue
+        namespace = title.split(":", 1)[0].lower()
+        if ":" in title and namespace in _NON_ARTICLE_NS:
+            continue
+        seen.add(title)
+        titles.append(title)
+    return titles
