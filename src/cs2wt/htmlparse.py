@@ -207,13 +207,15 @@ class _MarkdownParser(HTMLParser):
             if tag not in _VOID:
                 self.drop_depth += 1
             return
-        if tag in _DROP_TAGS or tag == "table":
-            self.drop_depth = 1
-            return
-        if attrs.get("id") in _DROP_IDS:
-            self.drop_depth = 1
-            return
-        if set(attrs.get("class", "").split()) & _DROP_CLASSES:
+        dropped = (
+            tag in _DROP_TAGS
+            or tag == "table"
+            or attrs.get("id") in _DROP_IDS
+            or bool(set(attrs.get("class", "").split()) & _DROP_CLASSES)
+        )
+        # Void elements have no end tag, so entering drop mode on one would
+        # swallow the rest of the document; they have no content to drop.
+        if dropped and tag not in _VOID:
             self.drop_depth = 1
             return
 

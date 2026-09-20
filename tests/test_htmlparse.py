@@ -108,6 +108,14 @@ class HtmlToMarkdownTest(unittest.TestCase):
         md = html_to_markdown("<html><body><p>plain</p></body></html>")
         self.assertEqual(md, "plain")
 
+    def test_void_element_with_drop_class_does_not_swallow(self):
+        # void 元素无结束标签，命中丢弃类时不得进入 drop 模式吞掉后续正文
+        md = html_to_markdown(
+            '<div id="mw-content-text"><img class="metadata" src="x.png">'
+            "<p>keep me</p></div>"
+        )
+        self.assertIn("keep me", md)
+
 
 if __name__ == "__main__":
     unittest.main()
