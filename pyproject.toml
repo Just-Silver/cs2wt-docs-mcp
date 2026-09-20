@@ -12,6 +12,7 @@ dependencies = ["mcp>=2,<3"]
 
 [project.scripts]
 cs2wt = "cs2wt.cli:main"
+cs2wt-mcp = "cs2wt.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

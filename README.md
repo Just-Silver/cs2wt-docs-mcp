@@ -58,6 +58,27 @@ cs2wt status
 全局参数：`--data-dir`（默认 `data`）、`--db`（默认 `<data-dir>/docs.sqlite`）、
 `--cookie`、`--api`、`--ua`、`--delay`。
 
+## MCP 服务端
+
+除 CLI 外，本项目提供一个 MCP 服务端，把离线索引通过 stdio 暴露给 AI 助手。
+
+```bash
+pip install -e .
+cs2wt-mcp            # 以 stdio 启动
+```
+
+环境变量（均有默认值）：`CS2WT_DATA_DIR`、`CS2WT_DB`、`CS2WT_PREFIX`、
+`CS2WT_API`、`CS2WT_UA`、`CS2WT_COOKIE`、`CS2WT_DELAY`、`CS2WT_NO_REFRESH`。
+
+启动后服务端立即就绪，并在后台执行一次刷新：本地无索引时自动全量抓取并建索引，
+已有索引时做增量同步。设置 `CS2WT_NO_REFRESH=1`（或 `--no-refresh`）可跳过刷新。
+
+暴露的工具：
+
+- `search_docs(query, limit)`：全文检索，返回命中页面与片段。
+- `get_page(id_or_title, section)`：读取页面正文，可按章节截取。
+- `list_pages()`：列出全部收录页面。
+
 ## MCP 服务端（规划中）
 
 MCP 是面向 AI 的主入口。设计要点：
