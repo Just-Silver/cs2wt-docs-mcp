@@ -276,7 +276,7 @@ cs2wt build                  # 重建 FTS5 索引
 
 ### 10.1 为什么放 CI
 
-- 文档更新频率低（周级），无需本地常驻进程。
+- 文档更新频率低（月级），无需本地常驻进程。
 - CI 有独立、稳定的公网出口与干净的 Python 环境，免去本地依赖与 Anubis cookie 维护。
 - 产物集中持久化。**MCP 是唯一消费端，只从仓库取数，永不访问源站**；CLI 的
   `fetch`/`sync` 是 CI 侧的生产工具（唯一接触 VDC 的组件）。
@@ -286,17 +286,18 @@ cs2wt build                  # 重建 FTS5 索引
 ```yaml
 on:
   schedule:
-    - cron: '17 3 * * 1'   # 每周一 03:17 UTC
+    - cron: '17 3 1 * *'   # 每月 1 日 03:17 UTC
   workflow_dispatch:        # 手动兜底
 ```
 
 官方要点（务必遵守）：
 
+- **频率：每月一次**。cron 是**日历式**的，无法表达"精确每 30 天"，故用"每月 1 日"等价。
 - `schedule` 使用 **POSIX cron**，默认 **UTC**；最短间隔 5 分钟。
 - **高负载时会延迟甚至丢弃**排队的 job，尤其是整点。因此 cron 用 `:17` 错开整点。
 - 定时 workflow **只在默认分支的最新提交上运行**——必须合入 `main` 后 `schedule` 才生效。
-- **公共仓库连续 60 天无活动会自动禁用**定时 workflow。故必须提供 `workflow_dispatch`
-  作为手动兜底，并在 README 说明如何重新启用。
+- **公共仓库连续 60 天无活动会自动禁用**定时 workflow（仓库活动，而非 workflow 运行）。
+  故必须提供 `workflow_dispatch` 作为手动兜底，并在 README 说明如何重新启用。
 
 ### 10.3 Anubis 与 CI 的关键约束（IP 绑定）
 
@@ -308,16 +309,21 @@ on:
   `--cookie "$RUNNER_TEMP/cookies.txt"`。
 - 同一次运行内 `User-Agent` 必须稳定（沿用默认 `DEFAULT_UA`）。
 
-### 10.4 持久化方案
+### 10.4 持久化方案：Release 整包（方案 B）
 
-`data/`、`cookies.txt`、`*.sqlite` 均已被 `.gitignore` 忽略，因此**不把数据提交进 `main`**。
-采用 **GitHub Releases（滚动 tag `data-latest`）** 作为主持久化：
+`data/`、`cookies.txt`、`*.sqlite` 均已被 `.gitignore` 忽略；本方案**不把任何数据提交进 git**
+（不污染仓库、不增历史），而是发布到 **GitHub Releases（滚动 tag `data-latest`）**：
 
-| 方案 | 结论 |
-|---|---|
-| **Release 资产（主）** | 存 `docs.sqlite` + `manifest.json`（可选 `raw.tar.gz`）。不受 `.gitignore` 影响、二进制不进 git 历史、**无过期**。用官方 `gh` CLI 读写，不引入第三方 action |
-| `data` 分支（备选） | `peaceiris/actions-gh-pages` + `force_orphan: true`，与 `TF2-Addons/tf2-cvar-scraper` 做法一致；需处理 `.gitignore` 与二进制分支 |
-| `actions/upload-artifact` | 默认 **90 天**后过期，**不适合**长期持久化，仅作调试用 |
+- 资产：`docs.sqlite` + `manifest.json`（manifest 含 `generated_at`，供消费端比对版本）。
+- 二进制不进 git 历史、资产**无过期**；用官方 `gh` CLI 读写，不引入第三方 action。
+- 消费端可用纯 HTTPS 直接下载资产，**无需 git、无需 gh**。
+- `actions/upload-artifact` 默认 **90 天**后过期，**不适合**长期持久化。
+
+> **已否决的方案 A**（`data` 分支 + git 增量）：当前规模（41 页、sqlite ~290KB）下，
+> 方案 B 更简单、MCP 无 git 依赖、且同样不污染仓库；真·字节增量只在数据量很大时才有价值。
+>
+> **说明**：此 Release 是**数据产物**（滚动 tag `data-latest`），不是软件版本发布，
+> 因此不适用 CHANGELOG / `tag==包版本` 的软件发版一致性卡点；但 tag 名不得与软件发布冲突。
 
 ### 10.5 工作流骨架
 
@@ -326,7 +332,7 @@ name: 更新文档索引
 
 on:
   schedule:
-    - cron: '17 3 * * 1'
+    - cron: '17 3 1 * *'
   workflow_dispatch:
 
 concurrency:
@@ -348,17 +354,15 @@ jobs:
           python-version: '3.12'
       - run: pip install -e .
 
-      - name: 还原已有索引
-        run: gh release download data-latest -D data --clobber || echo "首次运行：无历史数据"
-
-      - name: 增量同步（首次则全量）
-        run: |
-          if [ -f data/manifest.json ]; then
-            cs2wt sync --cookie "$RUNNER_TEMP/cookies.txt"
-          else
-            cs2wt fetch --cookie "$RUNNER_TEMP/cookies.txt"
+      - name: 全量抓取并建索引（失败自动重试）
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 20
+          max_attempts: 3
+          retry_wait_seconds: 30
+          command: |
+            cs2wt --cookie "$RUNNER_TEMP/cookies.txt" fetch
             cs2wt build
-          fi
 
       - name: 发布产物
         run: |
@@ -369,22 +373,41 @@ jobs:
 
 要点：
 
+- **每次全量抓取**（`fetch` + `build`）：HTML 通道下 `fetch` 与 `sync` 的请求数同为 O(页数)，
+  全量无需还原上一轮状态，最简最稳；41 页约 1 分钟。
 - `gh release download/upload` 是官方 CLI，runner 预装；`GH_TOKEN` 用内置 `GITHUB_TOKEN`。
-- 还原时必须**同时**取回 `docs.sqlite` 与 `manifest.json`——`sync` 只增量更新已变化页，
-  若只有 manifest 没有索引，会得到不完整的索引。
-- 用 `GITHUB_TOKEN` 产生的 Release 不会再触发其它 workflow（官方防递归行为），符合预期。
+- 用 `GITHUB_TOKEN` 产生的 Release 不会再触发其它 workflow（官方防递归行为）。
 - `concurrency` 不设 `cancel-in-progress: true`：带写回的运行被取消会丢产物。
 
-### 10.6 消费端
+### 10.6 失败重试
 
-- MCP/CLI 启动或首次部署时：`gh release download data-latest -D data --clobber`，
-  之后**完全离线**检索。
-- 可选：CI 额外把 `docs.sqlite` 发布到 GitHub Pages，供无 `gh` 环境的 HTTP 下载。
+- **GitHub Actions 没有内置的 step/job 重试参数**：`continue-on-error` 只是不阻塞，
+  `strategy` 只控制 matrix，二者都不重试。官方只提供**手动**重跑。
+- **官方重跑**（`gh run rerun`）：可重跑整个 run / 仅失败 job / 指定 job；
+  **限初始运行后 30 天内**，且**每个 run 最多重跑 50 次**。
+- **自动重试**：用社区事实标准 `nick-fields/retry` 包裹最易失败的抓取步骤
+  （见 §10.5）：`max_attempts: 3`、`retry_wait_seconds: 30`，并**必须**设置
+  `timeout_minutes` 或 `timeout_seconds`（该 action 的硬性要求）。
+- **可选整轮兜底**：加一个 `if: failure()` 的 job 执行
+  `gh run rerun ${{ github.run_id }} --failed`（需 `permissions: actions: write`），
+  对失败运行再跑一次；须防死循环（限次数或仅一次）。
+- 与 §11 的单页级容错互补：单页失败不中断整体，整轮失败才触发重试。
 
-### 10.7 频率建议
+### 10.7 消费端（MCP）
 
-每周一次足够（文档更新不频繁）。按 §8，HTML 通道的 `sync` 为 O(页数) 次往返，
-当前 41 页约 1 分钟，对 CI 完全无压力。
+- **MCP 只从 Release 取数，永不访问 VDC**：
+  1. 下载 `manifest.json`（小），比对 `generated_at` 与本地记录；
+  2. 若有更新，下载 `docs.sqlite` 并**原子替换**（先写临时文件再 `os.replace`，
+     避免读到半包）。
+- 用纯 HTTPS 即可（release 资产固定 URL：
+  `https://github.com/<owner>/<repo>/releases/download/data-latest/docs.sqlite`），
+  **无需 git、无需 gh**。
+- 首次运行 = 全量下载；后续仅在有新版本时整包替换——即"首次同步 + 后续增量（检测）"。
+- 可选：CI 额外把 `docs.sqlite` 发布到 GitHub Pages，提供备用下载源。
+
+### 10.8 频率
+
+每月一次。
 
 ## 11. 错误处理
 
