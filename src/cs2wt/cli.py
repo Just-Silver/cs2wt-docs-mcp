@@ -9,6 +9,7 @@ from pathlib import Path
 from .fetch import crawl
 from .http import DEFAULT_UA, AnubisSession
 from .index import DocIndex, build_index
+from .store import default_data_dir
 from .sync import sync
 from .wiki import HtmlClient
 
@@ -20,9 +21,15 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="cs2wt",
         description="Offline indexer for the Counter-Strike 2 Workshop Tools docs",
     )
-    parser.add_argument("--data-dir", default="data", help="where raw docs are stored")
+    parser.add_argument(
+        "--data-dir",
+        default=None,
+        help=f"where raw docs are stored (default: {default_data_dir()})",
+    )
     parser.add_argument("--db", default=None, help="index path (default: <data-dir>/docs.sqlite)")
-    parser.add_argument("--cookie", default="cookies.txt", help="Anubis cookie jar path")
+    parser.add_argument(
+        "--cookie", default=None, help="Anubis cookie jar path (default: <data-dir>/cookies.txt)"
+    )
     parser.add_argument("--ua", default=DEFAULT_UA, help="User-Agent (must stay stable)")
     parser.add_argument("--delay", type=float, default=1.0, help="seconds between requests")
 
@@ -58,6 +65,8 @@ def _new_client(args) -> HtmlClient:
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+    args.data_dir = args.data_dir or str(default_data_dir())
+    args.cookie = args.cookie or str(Path(args.data_dir) / "cookies.txt")
     db = args.db or str(Path(args.data_dir) / "docs.sqlite")
 
     if args.command == "fetch":

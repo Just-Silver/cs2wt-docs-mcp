@@ -21,6 +21,13 @@ class StoreTest(unittest.TestCase):
         manifest = {"pages": [{"title": "A", "revid": 1}, {"title": "B", "revid": 2}]}
         self.assertEqual(store.manifest_by_title(manifest)["B"]["revid"], 2)
 
+    def test_default_data_dir_is_user_level(self):
+        path = store.default_data_dir()
+        self.assertTrue(path.is_absolute())
+        self.assertEqual(path.name, store.APP_DIR_NAME)
+        # must not depend on the current working directory
+        self.assertNotEqual(path, Path("data").resolve())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,13 +4,16 @@ import unittest
 from pathlib import Path
 
 from cs2wt.mcp_config import ServerConfig
+from cs2wt.store import default_data_dir
 
 
 class ServerConfigTest(unittest.TestCase):
     def test_defaults(self):
         cfg = ServerConfig.from_sources([], env={})
-        self.assertEqual(cfg.data_dir, Path("data"))
-        self.assertEqual(cfg.db, Path("data") / "docs.sqlite")
+        data_dir = default_data_dir()
+        self.assertEqual(cfg.data_dir, data_dir)
+        self.assertEqual(cfg.db, data_dir / "docs.sqlite")
+        self.assertEqual(cfg.cookie, str(data_dir / "cookies.txt"))
         self.assertEqual(cfg.prefix, "Counter-Strike 2 Workshop Tools")
         self.assertTrue(cfg.refresh)
 

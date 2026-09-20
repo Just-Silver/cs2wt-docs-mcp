@@ -70,6 +70,16 @@ cs2wt build     # 构建 FTS5 索引
 
 之后检索完全离线。
 
+数据默认放在**用户级目录**（与当前工作目录无关，CLI 与 MCP 共用）：
+
+| 平台 | 默认数据目录 |
+|---|---|
+| Windows | `%LOCALAPPDATA%\cs2wt-docs` |
+| macOS | `~/Library/Application Support/cs2wt-docs` |
+| Linux | `$XDG_DATA_HOME/cs2wt-docs`（默认 `~/.local/share/cs2wt-docs`） |
+
+用 `--data-dir` / `CS2WT_DATA_DIR` 覆盖。
+
 ## CLI 用法
 
 ```bash
@@ -90,9 +100,9 @@ cs2wt list
 cs2wt status
 ```
 
-全局参数：`--data-dir`（默认 `data`）、`--db`（默认 `<data-dir>/docs.sqlite`）、
-`--cookie`、`--ua`、`--delay`。（全局参数需写在子命令**之前**，例如
-`cs2wt --cookie cookies.txt fetch`。）
+全局参数：`--data-dir`（默认见「安装」的用户级目录）、`--db`（默认
+`<data-dir>/docs.sqlite`）、`--cookie`（默认 `<data-dir>/cookies.txt`）、`--ua`、`--delay`。
+（全局参数需写在子命令**之前**，例如 `cs2wt --cookie cookies.txt fetch`。）
 
 ## MCP 服务端
 
@@ -112,8 +122,8 @@ cs2wt-mcp            # 以 stdio 启动
 ### 在 OpenCode（V2）中接入
 
 OpenCode V2 在 `mcp.servers` 下配置 MCP 服务器；本地 stdio 服务器用 `"type": "local"`
-加 `"command"` 数组。把下面这段原样放进你**打开本仓库时**的 `opencode.jsonc`
-（或 `.opencode/opencode.jsonc`；放全局则用 `~/.config/opencode/opencode.jsonc`）：
+加 `"command"` 数组。把下面这段放进你的项目 `opencode.jsonc`（或 `.opencode/opencode.jsonc`），
+或全局 `~/.config/opencode/opencode.jsonc`——数据目录是用户级的，与工作区无关：
 
 ```jsonc
 {
@@ -129,16 +139,10 @@ OpenCode V2 在 `mcp.servers` 下配置 MCP 服务器；本地 stdio 服务器�
 }
 ```
 
-- 数据目录默认是**工作目录下的 `data/`**；OpenCode 的 `cwd` 默认就是工作区，所以在**本仓库里**
-  打开 OpenCode 时无需配置路径。
-- 若把配置放到**全局** `~/.config/opencode/opencode.jsonc`、而工作区并非本仓库，则需显式给出
-  本仓库 `data/` 的**绝对路径**（换成你自己的路径；Windows 用正斜杠或转义反斜杠）：
-
-  ```jsonc
-  "environment": {
-    "CS2WT_DATA_DIR": "/absolute/path/to/cs2wt-docs-mcp/data"
-  }
-  ```
+- 索引与 cookie 自动落在**用户级数据目录**（见「安装」），与 OpenCode 的工作区无关，
+  所以在任何项目里打开 OpenCode 都开箱即用，**无需**配置路径。
+- 首次运行会后台抓取并建索引到该目录（联网、需过 Anubis）。要改到别处再加
+  `"environment": { "CS2WT_DATA_DIR": "/your/own/path" }`。
 - `cs2wt-mcp` 由 `pip install -e .` 安装。若它不在 `PATH` 上，把 `command` 换成
   `["python", "-m", "cs2wt.mcp_server"]`（或写入入口脚本的绝对路径）。
 - 希望服务端**完全不访问源站**时：先在仓库里跑过 `cs2wt fetch && cs2wt build`，
@@ -166,11 +170,11 @@ opencode mcp list        # 连接正常时显示 connected
 ## 数据布局
 
 ```
-data/
+<数据目录>（默认用户级，见「安装」）
   raw/<slug>.html       # 原始 HTML（source of truth），slug = quote(title, safe="")
   manifest.json         # 每页 title/revid/timestamp/file
   docs.sqlite           # FTS5 索引（title 为主键）
-cookies.txt             # Anubis 认证 cookie（可复用，勿提交）
+  cookies.txt           # Anubis 认证 cookie（可复用）
 ```
 
 ## 架构
@@ -233,6 +237,9 @@ cs2wt build                    # 重建 FTS5 索引
 
 不提供 wikitext → HTML 的转换（无意义）。保留 `manifest.json` 是为了把它已有的 title
 并入 BFS 种子，避免因链接爬取遗漏而丢页。
+
+> 若旧数据在仓库内的 `./data`：默认数据目录已改为用户级目录（见「安装」），给上面两条
+> 命令加 `--data-dir data` 即可继续用原位置。
 
 ## 后续项
 

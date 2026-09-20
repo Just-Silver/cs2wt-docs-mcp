@@ -31,8 +31,8 @@ jobs:
           max_attempts: 3
           retry_wait_seconds: 30
           command: |
-            cs2wt --cookie "$RUNNER_TEMP/cookies.txt" fetch
-            cs2wt build
+            cs2wt --data-dir data --cookie "$RUNNER_TEMP/cookies.txt" fetch
+            cs2wt --data-dir data build
 
       - name: 发布产物
         run: |
