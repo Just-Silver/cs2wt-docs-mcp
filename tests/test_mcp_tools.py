@@ -5,7 +5,9 @@ from cs2wt.mcp_tools import tool_get_page, tool_list_pages, tool_search_docs
 
 
 class FakeManager:
-    def __init__(self):
+    def __init__(self, state="READY", error=None):
+        self.state = state
+        self.error = error
         self.pages = {
             "Doc": {
                 "pageid": 1,
@@ -54,6 +56,22 @@ class ToolsTest(unittest.TestCase):
     def test_list(self):
         data = json.loads(tool_list_pages(FakeManager()))
         self.assertEqual(data["count"], 1)
+
+    def test_search_initializing(self):
+        data = json.loads(tool_search_docs(FakeManager(state="INITIALIZING"), "x"))
+        self.assertEqual(data["status"], "initializing")
+
+    def test_get_missing_page_error_state(self):
+        mgr = FakeManager(state="ERROR", error="DatabaseError: corrupt")
+        data = json.loads(tool_get_page(mgr, "Nope"))
+        self.assertFalse(data["found"])
+        self.assertEqual(data["status"], "error")
+        self.assertIn(mgr.error, data["message"])
+
+    def test_search_refreshing(self):
+        data = json.loads(tool_search_docs(FakeManager(state="REFRESHING"), "x"))
+        self.assertEqual(data["count"], 1)
+        self.assertTrue(data["refreshing"])
 
 
 if __name__ == "__main__":

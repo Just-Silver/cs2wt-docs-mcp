@@ -28,7 +28,8 @@ def build_server(manager: IndexManager) -> MCPServer:
         何时不使用：已知道确切页面标题或 pageid 时，直接调用 get_page 更高效；
         与 CS2 Workshop Tools 文档无关的问题不要使用。
         返回：JSON，含 count 与 results（每项含 pageid、title、url、snippet、score；
-        score 为 bm25，越小越相关）。
+        score 为 bm25，越小越相关）。索引初始化中或刷新失败时返回 status 字段；
+        后台刷新进行中时额外带 refreshing 字段。
         """
         return tool_search_docs(manager, query, limit)
 
@@ -41,7 +42,8 @@ def build_server(manager: IndexManager) -> MCPServer:
         参数：id_or_title 为纯数字时按 pageid 查询，否则按页面标题查询；
         section 为可选的章节标题（不区分大小写，支持部分匹配）。
         返回：JSON，含 found、pageid、title、url、revid、timestamp、content；
-        未找到页面或章节时 found 为 false。
+        未找到页面或章节时 found 为 false。索引初始化中或刷新失败时返回 status 字段；
+        后台刷新进行中时额外带 refreshing 字段。
         """
         return tool_get_page(manager, id_or_title, section)
 
@@ -51,7 +53,8 @@ def build_server(manager: IndexManager) -> MCPServer:
 
         何时使用：需要了解文档覆盖范围、列举全部页面，或确认某主题是否被收录。
         何时不使用：已有明确查询词时，用 search_docs 更合适。
-        返回：JSON，含 count 与 pages（每项含 pageid、title）。
+        返回：JSON，含 count 与 pages（每项含 pageid、title）。索引初始化中或刷新失败时返回
+        status 字段；后台刷新进行中时额外带 refreshing 字段。
         """
         return tool_list_pages(manager)
 

@@ -123,6 +123,18 @@ class IndexManagerTest(unittest.TestCase):
             self.assertIsNone(mgr.error)
             mgr.close()
 
+    def test_corrupt_db_does_not_raise(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = make_config(d, refresh=False)
+            cfg.db.write_bytes(b"not a database")
+
+            mgr = IndexManager(cfg)
+
+            self.assertEqual(mgr.state, "ERROR")
+            self.assertIsNotNone(mgr.error)
+            self.assertEqual(mgr.search("x"), [])
+            mgr.close()
+
 
 if __name__ == "__main__":
     unittest.main()

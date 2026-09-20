@@ -36,6 +36,21 @@ def _indexed_count(db: Path) -> int:
         return 0
 
 
+def _probe_db(db: Path) -> str | None:
+    """Return an error string if db is not a usable SQLite database."""
+    try:
+        conn = sqlite3.connect(db)
+    except (sqlite3.Error, OSError) as exc:
+        return f"{type(exc).__name__}: {exc}"
+    try:
+        conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
+        return None
+    except (sqlite3.Error, OSError) as exc:
+        return f"{type(exc).__name__}: {exc}"
+    finally:
+        conn.close()
+
+
 def _new_client(config: ServerConfig) -> WikiClient:
     session = AnubisSession(
         user_agent=config.ua, cookie_path=config.cookie, delay=config.delay
@@ -70,7 +85,19 @@ class IndexManager:
         self._reader: DocIndex | None = None
         self._closed = False
         if Path(config.db).exists():
-            self._reader = DocIndex(config.db, wal=True, check_same_thread=False)
+            probe_error = _probe_db(config.db)
+            if probe_error is not None:
+                self._error = probe_error
+                self._state = ERROR
+            else:
+                try:
+                    self._reader = DocIndex(
+                        config.db, wal=True, check_same_thread=False
+                    )
+                except (sqlite3.Error, OSError) as exc:
+                    self._reader = None
+                    self._error = f"{type(exc).__name__}: {exc}"
+                    self._state = ERROR
 
     # -- lifecycle ---------------------------------------------------------
 
