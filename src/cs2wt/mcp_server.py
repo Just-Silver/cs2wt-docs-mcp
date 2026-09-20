@@ -11,8 +11,8 @@ from .mcp_tools import tool_get_page, tool_list_pages, tool_search_docs
 INSTRUCTIONS = (
     "本服务提供 Counter-Strike 2 Workshop Tools 官方文档（Valve Developer Community）"
     "的离线全文检索。先用 search_docs 按关键词定位页面，再用 get_page 精读；"
-    "已知确切页面标题（或数字 rowid）时可直接 get_page。数据在服务启动时于后台自动更新，"
-    "无需手动触发。仅回答与该工具集文档相关的问题。"
+    "已知确切页面标题（或数字 rowid）时可直接 get_page。索引从 GitHub Release 自动下载 / 更新，"
+    "无需手动触发；下载失败时仍可用本地已有索引。仅回答与该工具集文档相关的问题。"
 )
 
 

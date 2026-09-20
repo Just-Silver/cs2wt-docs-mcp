@@ -49,21 +49,23 @@ VDC 的 `robots.txt` 禁止了 `/w/api.php`、`/w/Special:` 以及带 `title=Spe
 要求 **Python ≥ 3.10**。抓取 / 解析 / CLI 路径只用标准库；MCP 服务端依赖官方
 [`mcp`](https://pypi.org/project/mcp/) SDK（`mcp>=2,<3`，当前唯一的运行时依赖）。
 
+从 GitHub 安装（推荐用 [pipx](https://pipx.pypa.io/) 隔离环境）：
+
 ```bash
-pip install -e .
+pipx install git+https://github.com/Just-Silver/cs2wt-docs-mcp.git
+# 或：pip install git+https://github.com/Just-Silver/cs2wt-docs-mcp.git
 ```
 
 安装后得到两个入口：`cs2wt`（CLI）与 `cs2wt-mcp`（MCP 服务端，stdio）。
-不使用 MCP 时，也可直接用源码运行 CLI：
+
+**MCP 无需手动准备数据**：首次运行会自动从 GitHub Release 下载预建索引（见下）。
+
+想自行抓取数据（**联网**、需通过 Anubis 挑战）或参与开发时，用源码安装：
 
 ```bash
-set PYTHONPATH=src        # Windows (cmd)
-python -m cs2wt --help
-```
-
-首次使用需先获取数据（**联网**、需通过 Anubis 挑战）：
-
-```bash
+git clone https://github.com/Just-Silver/cs2wt-docs-mcp.git
+cd cs2wt-docs-mcp
+pip install -e .
 cs2wt fetch     # 全量抓取 /wiki/<标题>，落盘 raw HTML
 cs2wt build     # 构建 FTS5 索引
 ```
@@ -81,6 +83,8 @@ cs2wt build     # 构建 FTS5 索引
 用 `--data-dir` / `CS2WT_DATA_DIR` 覆盖。
 
 ## CLI 用法
+
+> `fetch` / `sync` 会实时抓取源站，供维护者或自建数据；只想检索的话，MCP 会自动下载预建索引，无需抓取。
 
 ```bash
 # 首次全量抓取（默认 prefix: "Counter-Strike 2 Workshop Tools"）
@@ -109,15 +113,19 @@ cs2wt status
 除 CLI 外，本项目提供一个 MCP 服务端，把离线索引通过 stdio 暴露给 AI 助手。
 
 ```bash
-pip install -e .
 cs2wt-mcp            # 以 stdio 启动
 ```
 
-环境变量（均有默认值）：`CS2WT_DATA_DIR`、`CS2WT_DB`、`CS2WT_PREFIX`、
-`CS2WT_UA`、`CS2WT_COOKIE`、`CS2WT_DELAY`、`CS2WT_NO_REFRESH`。
+数据来源是 GitHub Release（滚动 tag `data-latest`），**不访问源站**：
 
-启动后服务端立即就绪，并在后台执行一次刷新：本地无索引时自动全量抓取并建索引，
-已有索引时做增量同步。设置 `CS2WT_NO_REFRESH=1`（或 `--no-refresh`）可跳过刷新。
+- **首次运行**：下载预建的 `docs.sqlite` + `manifest.json` 到用户级数据目录。
+- **之后每次启动**：拉取约 5KB 的 `manifest.json` 比对 `generated_at`，仅在远端更新时整包替换；
+  距上次成功检查不足 24 小时则跳过（`CS2WT_CHECK_INTERVAL`）。
+- 已有本地索引时，下载失败不影响使用（照常离线检索）。
+
+环境变量（均有默认值）：`CS2WT_DATA_DIR`、`CS2WT_DB`、`CS2WT_RELEASE_REPO`、
+`CS2WT_RELEASE_TAG`、`CS2WT_CHECK_INTERVAL`、`CS2WT_NO_REFRESH`。
+设置 `CS2WT_NO_REFRESH=1`（或 `--no-refresh`）可完全关闭自动下载 / 检查。
 
 ### 在 OpenCode（V2）中接入
 
@@ -139,15 +147,14 @@ OpenCode V2 在 `mcp.servers` 下配置 MCP 服务器；本地 stdio 服务器�
 }
 ```
 
-- 索引与 cookie 自动落在**用户级数据目录**（见「安装」），与 OpenCode 的工作区无关，
+- 索引自动落在**用户级数据目录**（见「安装」），与 OpenCode 的工作区无关，
   所以在任何项目里打开 OpenCode 都开箱即用，**无需**配置路径。
-- 首次运行会后台抓取并建索引到该目录（联网、需过 Anubis）。要改到别处再加
-  `"environment": { "CS2WT_DATA_DIR": "/your/own/path" }`。
-- `cs2wt-mcp` 由 `pip install -e .` 安装。若它不在 `PATH` 上，把 `command` 换成
+- 首次运行会自动从 Release 下载索引（纯 HTTPS，无需 Anubis）。要改到别处、或用 fork 的
+  产物，再加 `"environment": { "CS2WT_DATA_DIR": "...", "CS2WT_RELEASE_REPO": "owner/repo" }`。
+- `cs2wt-mcp` 由安装步骤提供。若它不在 `PATH` 上，把 `command` 换成
   `["python", "-m", "cs2wt.mcp_server"]`（或写入入口脚本的绝对路径）。
-- 希望服务端**完全不访问源站**时：先在仓库里跑过 `cs2wt fetch && cs2wt build`，
-  再加 `"CS2WT_NO_REFRESH": "1"`（`environment` 的值都是字符串）。
-- 其余可用环境变量：`CS2WT_DB`、`CS2WT_PREFIX`、`CS2WT_UA`、`CS2WT_COOKIE`、`CS2WT_DELAY`。
+- 想固定用本地索引、不自动联网检查：加 `"CS2WT_NO_REFRESH": "1"`（`environment` 的值都是字符串）。
+- 其余可用环境变量：`CS2WT_DB`、`CS2WT_RELEASE_TAG`、`CS2WT_CHECK_INTERVAL`。
 
 也可用 CLI 添加（会写入项目配置，保留其它设置）：
 
@@ -171,10 +178,11 @@ opencode mcp list        # 连接正常时显示 connected
 
 ```
 <数据目录>（默认用户级，见「安装」）
-  raw/<slug>.html       # 原始 HTML（source of truth），slug = quote(title, safe="")
-  manifest.json         # 每页 title/revid/timestamp/file
-  docs.sqlite           # FTS5 索引（title 为主键）
-  cookies.txt           # Anubis 认证 cookie（可复用）
+  docs.sqlite           # FTS5 索引（title 为主键）；MCP 从 Release 下载
+  manifest.json         # 每页 title/revid/timestamp/file + generated_at；同上
+  last_check.json       # 上次成功检查 Release 的时间（节流用，本地生成）
+  raw/<slug>.html       # 原始 HTML（source of truth）；仅 CLI 自建时存在
+  cookies.txt           # Anubis 认证 cookie；仅 CLI 抓取时使用
 ```
 
 ## 架构
@@ -189,6 +197,7 @@ opencode mcp list        # 连接正常时显示 connected
 | `sync.py` | 增量同步（逐页 revid 比对，新增/更新/删除） |
 | `store.py` | manifest 与 raw HTML 文件的读写（按 title） |
 | `index.py` | SQLite FTS5 索引（`title` 为键，rowid 跨同步稳定） |
+| `release.py` | 从 GitHub Release 下载 / 比对预建索引（MCP 的数据来源） |
 | `cli.py` | 命令行入口 |
 
 ## 增量同步

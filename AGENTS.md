@@ -47,6 +47,7 @@ cs2wt-mcp                                                   # 以 stdio 启动 M
 - `htmlparse.py` 是零依赖 HTML 解析/转换模块（`extract_meta` / `extract_links` / `html_to_markdown`），已取代旧的 `convert.py`。
 - **同步语义**：删除**只**由页面自身 404 决定，链接枚举仅用于发现新增；标题重命名（重定向）表现为旧键 `removed` + 新键 `added`；revid 未变的页若索引缺失会补 upsert（自愈）。
 - **Anubis**：挑战与 `User-Agent` + 客户端 IP 绑定，cookie 约 7 天；**整会话必须保持同一 UA**。CI runner 出口 IP 每轮不同，故每轮重新求解、不缓存 cookie。
+- **MCP 只从 GitHub Release 取数，永不访问 VDC**：`release.py` 拉 `data-latest` 的 `manifest.json` 比对 `generated_at`，较新才整包下载 `docs.sqlite`，由 `IndexManager._swap_in` 原子替换（先关 reader、清 `-wal`/`-shm`，否则 Windows 覆盖失败 / 旧 WAL 污染新库）；启动检查按 `check_interval`（默认 24h，记于 `<数据目录>/last_check.json`）节流，**无本地索引时忽略节流**。CLI 的 `fetch`/`sync` 仅供维护者 / CI 自建数据。
 - 索引：单文件 SQLite **FTS5**，`title` 为键，`rowid` 跨同步稳定（`upsert` 复用 rowid）。
 - 依赖：运行时仅 `mcp>=2,<3`；CLI / 抓取 / 解析路径只用标准库（`html.parser` / `urllib` / `sqlite3`）。新增依赖登记到 `pyproject.toml`。
 
