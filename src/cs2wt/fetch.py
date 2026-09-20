@@ -1,6 +1,6 @@
-"""Crawl a documentation tree from the wiki and persist raw wikitext.
+"""Crawl the documentation tree as raw HTML.
 
-Raw wikitext is the source of truth: it is stored untouched so the markdown /
+Raw HTML is the source of truth: it is stored untouched so the Markdown /
 index layers can always be rebuilt, and so incremental syncs can diff by
 revision id.
 """
@@ -11,42 +11,35 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import store
-from .wiki import WikiClient
-
-BATCH_SIZE = 20  # anonymous API limit is 50 titles/request; stay conservative
+from .wiki import HtmlClient
 
 
 def crawl(
-    client: WikiClient,
+    client: HtmlClient,
     *,
     prefix: str,
     out_dir: str | Path,
 ) -> dict:
-    """Fetch every page under ``prefix`` and write raw wikitext + a manifest."""
+    """Fetch every reachable page under ``prefix`` and write raw HTML + manifest."""
     out_dir = Path(out_dir)
     store.raw_dir(out_dir).mkdir(parents=True, exist_ok=True)
+    seeds = [record["title"] for record in store.load_manifest(out_dir).get("pages", [])]
 
-    discovered = list(client.iter_all_pages(prefix))
     records: list[dict] = []
-
-    for batch in store.chunks([p["title"] for p in discovered], BATCH_SIZE):
-        for page in client.fetch_pages(batch):
-            store.raw_path(out_dir, page.pageid).write_text(
-                page.content, encoding="utf-8"
-            )
-            records.append(
-                {
-                    "pageid": page.pageid,
-                    "title": page.title,
-                    "revid": page.revid,
-                    "timestamp": page.timestamp,
-                    "file": f"raw/{page.pageid}.wiki",
-                }
-            )
-            print(f"  fetched {page.title} (rev {page.revid})")
+    for page in client.iter_pages(prefix, seeds=seeds):
+        store.raw_path(out_dir, page.title).write_text(page.html, encoding="utf-8")
+        records.append(
+            {
+                "title": page.title,
+                "revid": page.revid,
+                "timestamp": page.timestamp,
+                "file": f"raw/{store.slug(page.title)}.html",
+            }
+        )
+        print(f"  fetched {page.title} (rev {page.revid})")
 
     manifest = {
-        "source": client.api_url,
+        "source": client.base_url,
         "prefix": prefix,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "pages": records,
