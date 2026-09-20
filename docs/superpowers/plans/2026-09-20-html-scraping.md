@@ -843,12 +843,15 @@ class DocIndexTitleTest(unittest.TestCase):
 
     def test_rowid_is_stable_across_updates(self):
         self._put("Alpha", 1, "one")
-        first = self.idx.get("Alpha")
+        self.assertEqual(self.idx.get(1)["title"], "Alpha")
         self._put("Alpha", 2, "two")
         second = self.idx.get("Alpha")
         self.assertEqual(second["revid"], 2)
         self.assertIn("two", second["content"])
         self.assertEqual(self.idx.count(), 1)
+        # rowid must be reused across updates (stable per-page id)
+        self.assertEqual(self.idx.get(1)["revid"], 2)
+        self.assertIsNone(self.idx.get(2))
 
     def test_get_by_rowid_and_title(self):
         self._put("Alpha", 1, "one")
@@ -937,7 +940,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(
             for r in rows
         ]
 
-    def get(self, key) -> dict | None:
+    def get(self, key: str | int) -> dict | None:
         if isinstance(key, int) or (isinstance(key, str) and key.isdigit()):
             where, params = "rowid = ?", (int(key),)
         else:
