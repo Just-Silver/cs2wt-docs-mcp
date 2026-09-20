@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cs2wt-docs-mcp"
+version = "0.1.0"
+description = "Offline CLI/MCP indexer for the Counter-Strike 2 Workshop Tools documentation"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+cs2wt = "cs2wt.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
