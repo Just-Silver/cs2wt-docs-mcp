@@ -1,17 +1,19 @@
 """HTML client for Valve Developer Community.
 
-Only ``/wiki/<title>`` is requested (robots.txt compliant); the Anubis PoW
-handshake is handled by :class:`~cs2wt.http.AnubisSession`.  Enumeration is a
-link BFS because the site has no sitemap.
+Only ``/wiki/<title>`` and the clean ``/wiki/Special:PrefixIndex/<prefix>``
+path are requested (robots.txt compliant); the Anubis PoW handshake is handled
+by :class:`~cs2wt.http.AnubisSession`.  Enumeration uses ``Special:PrefixIndex``
+because the site has no sitemap.
 """
 
 from __future__ import annotations
 
 import time
 import urllib.error
+import urllib.parse
 from dataclasses import dataclass
 
-from .htmlparse import BASE_URL, extract_links, extract_meta, page_url
+from .htmlparse import BASE_URL, extract_links, extract_meta, is_redirect, page_url
 from .http import AnubisSession
 
 FETCH_RETRIES = 3  # per-page attempts, including the first
@@ -24,6 +26,7 @@ class PageContent:
     revid: int | None
     timestamp: str
     html: str
+    is_redirect: bool = False
 
 
 class HtmlClient:
@@ -43,19 +46,16 @@ class HtmlClient:
     def page_url(self, title: str) -> str:
         return page_url(title, self.base_url)
 
-    def fetch_page(self, title: str) -> PageContent | None:
-        """Fetch and parse one page; return ``None`` if it does not exist.
+    def _get_html(self, url: str) -> str | None:
+        """GET and decode ``url`` with the same transient retries as fetch_page.
 
-        Transient failures (non-404 HTTP errors, network errors) are retried up
-        to ``self.retries`` times with ``self.retry_delay`` seconds between
-        attempts; the last error is re-raised if every attempt fails.
+        Returns ``None`` on HTTP 404; re-raises the last error if every attempt
+        fails.
         """
-        url = self.page_url(title)
         error: Exception | None = None
         for attempt in range(self.retries):
             try:
-                html = self.session.get(url).decode("utf-8", "replace")
-                break
+                return self.session.get(url).decode("utf-8", "replace")
             except urllib.error.HTTPError as exc:
                 if exc.code == 404:
                     return None
@@ -64,36 +64,72 @@ class HtmlClient:
                 error = exc
             if attempt + 1 < self.retries:
                 time.sleep(self.retry_delay)
-        else:
-            assert error is not None
-            raise error
+        assert error is not None
+        raise error
+
+    def fetch_page(self, title: str) -> PageContent | None:
+        """Fetch and parse one page; return ``None`` if it does not exist.
+
+        Transient failures (non-404 HTTP errors, network errors) are retried up
+        to ``self.retries`` times with ``self.retry_delay`` seconds between
+        attempts; the last error is re-raised if every attempt fails.
+        """
+        url = self.page_url(title)
+        html = self._get_html(url)
+        if html is None:
+            return None
         meta = extract_meta(html)
         return PageContent(
-            title=meta["title"] or title,
+            title=title,
             revid=meta["revid"],
             timestamp=meta["timestamp"],
             html=html,
+            is_redirect=is_redirect(html),
         )
 
+    def list_titles(self, prefix: str) -> list[str]:
+        """Return every page title under ``prefix`` via ``Special:PrefixIndex``.
+
+        The returned titles preserve the order in which the index links them
+        and are de-duplicated.  Only titles that still start with ``prefix``
+        (as spelled by the caller) are kept.
+        """
+        url = (
+            f"{self.base_url}/wiki/Special:PrefixIndex/"
+            + urllib.parse.quote(prefix.replace(" ", "_"), safe="/")
+        )
+        html = self._get_html(url)
+        if html is None:
+            # Never return an empty list on failure: callers would treat it as
+            # "no pages exist" and delete every local page.
+            raise RuntimeError(f"PrefixIndex request failed: {url}")
+        titles: list[str] = []
+        seen: set[str] = set()
+        for title in extract_links(html):
+            if title.startswith(prefix) and title not in seen:
+                seen.add(title)
+                titles.append(title)
+        return titles
+
     def iter_pages(self, prefix: str, seeds=(), known=None, failed=None):
-        """BFS over ``/wiki/`` links, yielding pages whose title has ``prefix``.
+        """Yield pages under ``prefix`` enumerated from ``Special:PrefixIndex``.
 
         ``seeds`` (e.g. titles from an existing manifest) are visited first so a
         migration cannot drop already-known pages.  ``known`` is an optional
         title->PageContent cache that is read and populated, so callers can
         avoid re-fetching pages they already have.  ``failed`` is an optional
         list that collects titles whose fetch raised; a transient failure is
-        skipped so it cannot abort the whole traversal.
+        skipped so it cannot abort the whole traversal.  Missing (404) and
+        redirect pages are skipped.
         """
         known = {} if known is None else known
-        queue = [prefix, *seeds]
-        visited: set[str] = set()
-        yielded: set[str] = set()
-        while queue:
-            title = queue.pop(0)
-            if title in visited:
-                continue
-            visited.add(title)
+        candidates: list[str] = []
+        seen: set[str] = set()
+        for title in [*seeds, *self.list_titles(prefix)]:
+            if title not in seen:
+                seen.add(title)
+                candidates.append(title)
+        for title in candidates:
             page = known.get(title)
             if page is None:
                 try:
@@ -102,15 +138,9 @@ class HtmlClient:
                     if failed is not None:
                         failed.append(title)
                     continue
-                if page is None:
+                if page is None or page.is_redirect:
                     continue
                 known[title] = page
-            if page.title in yielded:
-                # A different queued title redirected to a page we already
-                # yielded; skip it (its links were traversed on first yield).
+            if page.is_redirect:
                 continue
-            yielded.add(page.title)
             yield page
-            for link in extract_links(page.html):
-                if link.startswith(prefix) and link not in visited:
-                    queue.append(link)
