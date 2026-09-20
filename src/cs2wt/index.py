@@ -47,10 +47,18 @@ def page_url(title: str) -> str:
 
 
 class DocIndex:
-    def __init__(self, path: str | Path) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        wal: bool = False,
+        check_same_thread: bool = True,
+    ) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(self.path)
+        self.conn = sqlite3.connect(self.path, check_same_thread=check_same_thread)
+        if wal:
+            self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(_SCHEMA)
 
     # -- writes ------------------------------------------------------------
