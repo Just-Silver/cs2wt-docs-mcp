@@ -122,18 +122,23 @@ OpenCode V2 在 `mcp.servers` 下配置 MCP 服务器；本地 stdio 服务器�
     "servers": {
       "cs2wt": {
         "type": "local",
-        "command": ["cs2wt-mcp"],
-        "environment": {
-          "CS2WT_DATA_DIR": "E:/Code/Docs/cs2wt-docs-mcp/data"
-        }
+        "command": ["cs2wt-mcp"]
       }
     }
   }
 }
 ```
 
-- `CS2WT_DATA_DIR` 指向本仓库的 `data/` 目录，**建议写绝对路径**，避免随工作目录变化。
-  不设时默认取当前工作目录下的 `data/`（OpenCode 的 `cwd` 默认即工作区）。
+- 数据目录默认是**工作目录下的 `data/`**；OpenCode 的 `cwd` 默认就是工作区，所以在**本仓库里**
+  打开 OpenCode 时无需配置路径。
+- 若把配置放到**全局** `~/.config/opencode/opencode.jsonc`、而工作区并非本仓库，则需显式给出
+  本仓库 `data/` 的**绝对路径**（换成你自己的路径；Windows 用正斜杠或转义反斜杠）：
+
+  ```jsonc
+  "environment": {
+    "CS2WT_DATA_DIR": "/absolute/path/to/cs2wt-docs-mcp/data"
+  }
+  ```
 - `cs2wt-mcp` 由 `pip install -e .` 安装。若它不在 `PATH` 上，把 `command` 换成
   `["python", "-m", "cs2wt.mcp_server"]`（或写入入口脚本的绝对路径）。
 - 希望服务端**完全不访问源站**时：先在仓库里跑过 `cs2wt fetch && cs2wt build`，
