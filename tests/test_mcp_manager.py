@@ -15,7 +15,6 @@ def make_config(tmp: str, refresh: bool) -> ServerConfig:
         data_dir=Path(tmp),
         db=Path(tmp) / "docs.sqlite",
         prefix="P",
-        api="http://example/api.php",
         ua="UA",
         cookie=str(Path(tmp) / "cookies.txt"),
         delay=0.0,
@@ -26,7 +25,6 @@ def make_config(tmp: str, refresh: bool) -> ServerConfig:
 def seed_index(cfg: ServerConfig) -> None:
     index = DocIndex(cfg.db)
     index.upsert(
-        pageid=1,
         title="Page",
         content="hello world",
         revid=1,

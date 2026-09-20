@@ -1,3 +1,5 @@
+import contextlib
+import io
 import unittest
 from pathlib import Path
 
@@ -36,6 +38,11 @@ class ServerConfigTest(unittest.TestCase):
     def test_explicit_db(self):
         cfg = ServerConfig.from_sources(["--db", "x.sqlite"], env={})
         self.assertEqual(cfg.db, Path("x.sqlite"))
+
+    def test_api_flag_is_not_recognized(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                ServerConfig.from_sources(["--api", "http://example/api.php"], env={})
 
 
 if __name__ == "__main__":

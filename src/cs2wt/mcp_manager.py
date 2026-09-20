@@ -15,7 +15,7 @@ from .http import AnubisSession
 from .index import DocIndex, build_index
 from .mcp_config import ServerConfig
 from .sync import sync
-from .wiki import WikiClient
+from .wiki import HtmlClient
 
 INITIALIZING = "INITIALIZING"
 REFRESHING = "REFRESHING"
@@ -51,11 +51,11 @@ def _probe_db(db: Path) -> str | None:
         conn.close()
 
 
-def _new_client(config: ServerConfig) -> WikiClient:
+def _new_client(config: ServerConfig) -> HtmlClient:
     session = AnubisSession(
         user_agent=config.ua, cookie_path=config.cookie, delay=config.delay
     )
-    return WikiClient(session, api_url=config.api)
+    return HtmlClient(session)
 
 
 def default_refresh(config: ServerConfig, has_index: bool) -> None:
@@ -179,11 +179,9 @@ class IndexManager:
         with self._lock:
             if self._reader is None:
                 return None
-            if key.isdigit():
-                return self._reader.get(int(key))
-            return self._reader.get_by_title(key)
+            return self._reader.get(key)
 
-    def list_titles(self) -> list[tuple[int, str]]:
+    def list_titles(self) -> list[str]:
         with self._lock:
             if self._reader is None:
                 return []

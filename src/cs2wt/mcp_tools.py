@@ -59,7 +59,6 @@ def tool_get_page(manager, id_or_title: str, section: str | None = None) -> str:
                 {
                     "found": False,
                     "message": f"未找到章节：{section}",
-                    "pageid": page["pageid"],
                     "title": page["title"],
                 }
             )
@@ -67,7 +66,6 @@ def tool_get_page(manager, id_or_title: str, section: str | None = None) -> str:
 
     payload = {
         "found": True,
-        "pageid": page["pageid"],
         "title": page["title"],
         "url": page["url"],
         "revid": page["revid"],
@@ -82,7 +80,7 @@ def tool_get_page(manager, id_or_title: str, section: str | None = None) -> str:
 def tool_list_pages(manager) -> str:
     if _state(manager) == "INITIALIZING":
         return _initializing()
-    pages = [{"pageid": pid, "title": title} for pid, title in manager.list_titles()]
+    pages = [{"title": title} for title in manager.list_titles()]
     payload = {"count": len(pages), "pages": pages}
     if _state(manager) == "ERROR" and len(pages) == 0:
         payload["status"] = "error"

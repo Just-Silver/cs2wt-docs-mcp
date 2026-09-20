@@ -10,7 +10,6 @@ class FakeManager:
         self.error = error
         self.pages = {
             "Doc": {
-                "pageid": 1,
                 "title": "Doc",
                 "url": "u",
                 "revid": 2,
@@ -20,13 +19,13 @@ class FakeManager:
         }
 
     def search(self, query, limit=10):
-        return [{"pageid": 1, "title": "Doc", "url": "u", "snippet": "s", "score": 1.0}]
+        return [{"title": "Doc", "url": "u", "snippet": "s", "score": 1.0}]
 
     def get(self, key):
         return self.pages.get(key)
 
     def list_titles(self):
-        return [(1, "Doc")]
+        return ["Doc"]
 
 
 class ToolsTest(unittest.TestCase):

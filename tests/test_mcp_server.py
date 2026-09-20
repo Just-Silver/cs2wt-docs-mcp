@@ -15,7 +15,6 @@ def make_config(tmp: str) -> ServerConfig:
         data_dir=Path(tmp),
         db=Path(tmp) / "docs.sqlite",
         prefix="P",
-        api="http://example/api.php",
         ua="UA",
         cookie=str(Path(tmp) / "cookies.txt"),
         delay=0.0,

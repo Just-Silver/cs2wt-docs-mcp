@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .http import DEFAULT_UA
-from .wiki import DEFAULT_API
 
 DEFAULT_PREFIX = "Counter-Strike 2 Workshop Tools"
 _TRUTHY = {"1", "true", "yes", "on"}
@@ -19,7 +18,6 @@ class ServerConfig:
     data_dir: Path
     db: Path
     prefix: str
-    api: str
     ua: str
     cookie: str
     delay: float
@@ -34,7 +32,6 @@ class ServerConfig:
         parser.add_argument("--data-dir")
         parser.add_argument("--db")
         parser.add_argument("--prefix")
-        parser.add_argument("--api")
         parser.add_argument("--ua")
         parser.add_argument("--cookie")
         parser.add_argument("--delay", type=float)
@@ -44,7 +41,6 @@ class ServerConfig:
         data_dir = ns.data_dir or env.get("CS2WT_DATA_DIR") or "data"
         db = ns.db or env.get("CS2WT_DB") or str(Path(data_dir) / "docs.sqlite")
         prefix = ns.prefix or env.get("CS2WT_PREFIX") or DEFAULT_PREFIX
-        api = ns.api or env.get("CS2WT_API") or DEFAULT_API
         ua = ns.ua or env.get("CS2WT_UA") or DEFAULT_UA
         cookie = ns.cookie or env.get("CS2WT_COOKIE") or "cookies.txt"
         delay = (
@@ -56,7 +52,6 @@ class ServerConfig:
             data_dir=Path(data_dir),
             db=Path(db),
             prefix=prefix,
-            api=api,
             ua=ua,
             cookie=cookie,
             delay=delay,
